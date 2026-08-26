@@ -1,0 +1,288 @@
+<div align="center">
+
+# 🎧 Telecast
+
+**A Telegram voice-chat music & video bot.**
+
+Stream YouTube tracks (or your own audio/video files) straight into a group voice chat — with a rich inline player, playlists, audio effects, live-call title updates, and per-group rankings.
+
+<a href="https://github.com/bisnuray/Telecast/stargazers"><img src="https://img.shields.io/github/stars/bisnuray/Telecast?color=blue&style=flat" alt="GitHub Repo stars"></a>
+<a href="https://github.com/bisnuray/Telecast/network/members"><img src="https://img.shields.io/github/forks/bisnuray/Telecast?style=flat" alt="GitHub forks"></a>
+<a href="https://github.com/bisnuray/Telecast/issues"><img src="https://img.shields.io/github/issues/bisnuray/Telecast" alt="GitHub issues"></a>
+<a href="https://github.com/bisnuray/Telecast/pulls"><img src="https://img.shields.io/github/issues-pr/bisnuray/Telecast" alt="GitHub pull requests"></a>
+<a href="https://github.com/bisnuray/Telecast/graphs/contributors"><img src="https://img.shields.io/github/contributors/bisnuray/Telecast?style=flat" alt="GitHub contributors"></a>
+<br>
+<img src="https://img.shields.io/badge/Python-3.11-blue" alt="Python 3.11">
+<img src="https://img.shields.io/badge/Database-MongoDB-green" alt="MongoDB">
+<img src="https://img.shields.io/badge/Streaming-py--tgcalls-orange" alt="py-tgcalls">
+<img src="https://img.shields.io/badge/License-MIT-blue" alt="MIT License">
+
+</div>
+
+---
+
+## ✨ Features
+
+- 🎵 **Music & video streaming** — play YouTube audio *or* video into a voice chat.
+- 🎛 **Inline player** — pause / resume / skip / stop / seek / rewind / replay / volume, all from buttons.
+- 🎚 **Audio effects** — Bass Boost, Nightcore, Slowed, Lofi, 8D.
+- ⏩ **Playback speed** — from `0.5x` to `2.0x`.
+- 🔁 **Loop modes** — off / repeat-track / repeat-queue.
+- 📜 **Playlists** — load a whole YouTube playlist (lazy-fetched 10 tracks at a time), plus save / load / delete named playlists.
+- 🏆 **Rankings** — daily, weekly and global top-listeners, rendered as banner images.
+- 📎 **Telegram files** — reply to an audio/video file to queue it directly.
+- 🔴 **Live streams** — plays YouTube live streams.
+- 🔍 **Inline search** — type `@YourBot song name` in any chat to search YouTube.
+- 🎯 **Live call title** — updates the group call title to the currently playing track.
+- 👥 **Multi-chat** — serves many groups at once.
+- 🛡 **Permissions** — group-admins plus a per-group "VC admin" system.
+- 📡 **Broadcast** — owner-only message broadcast to all users/groups.
+
+---
+
+## 📋 Requirements
+
+**Runtime (not installable via pip):**
+
+| Dependency | Why | Install |
+| --- | --- | --- |
+| **Python 3.11** | runtime | [python.org](https://www.python.org/) |
+| **ffmpeg** | audio effects + re-encoding | `apt install ffmpeg` (or [ffmpeg.org](https://ffmpeg.org/)) |
+| **`yt-dlp` CLI** | live-stream URL extraction | installed automatically by `run.sh` |
+| **MongoDB** | all persistence | [mongodb.com](https://www.mongodb.com/) or [Atlas](https://www.mongodb.com/atlas) |
+| **Deno** | YouTube JS-challenge solving for `yt-dlp` | installed automatically by `run.sh` |
+
+> **Note on Deno:** it is **required** for solving YouTube's JS challenges. `run.sh` installs it automatically if missing.
+
+Python packages are listed in [`requirements.txt`](requirements.txt) and installed automatically by `run.sh`.
+
+---
+
+## 🚀 Quick start
+
+```bash
+git clone <your-repo-url>
+cd Telecast
+
+# 1. Fill in your credentials
+cp .env.example .env
+nano .env
+
+# 2. Add your YouTube cookies (see "YouTube cookies" below)
+mkdir -p cookies
+# place your Netscape-format cookies at cookies/yt.txt
+
+# 3. Run (installs deps + yt-dlp + ffmpeg, then launches)
+./run.sh
+```
+
+That's it. `run.sh` is idempotent — it installs/upgrades Python dependencies, `yt-dlp`, and `ffmpeg` if missing, then starts the bot.
+
+To run without `run.sh`:
+
+```bash
+pip install -r requirements.txt
+python3.11 bot.py
+```
+
+---
+
+## 🔐 Setup in detail
+
+### 1. Get your API credentials
+
+1. Go to [my.telegram.org](https://my.telegram.org) and log in.
+2. Create an app to get **`API_ID`** and **`API_HASH`**.
+3. Create your bot with [@BotFather](https://t.me/BotFather) to get **`BOT_TOKEN`**.
+
+### 2. Get a user `SESSION_STRING`
+
+The bot uses **two** accounts:
+
+- `vc_music_bot` — your bot (runs on `BOT_TOKEN`).
+- `user_client` — a **user** account (runs on `SESSION_STRING`). This is the account that actually joins the voice chat and streams, because Telegram requires a *user* (not a bot) to stream audio in a voice chat.
+
+Generate the session string using [@TgDevToolBot](https://t.me/TgDevToolBot):
+
+1. Open Telegram and start **[@TgDevToolBot](https://t.me/TgDevToolBot)**.
+2. Select **🔐 Pyrogram Session** from the menu.
+3. Enter your `API_ID` and `API_HASH` when prompted.
+4. Log in with the **user account's** phone number and the OTP code.
+5. Copy the resulting string into `.env` as `SESSION_STRING`.
+
+### 3. MongoDB
+
+Use a local MongoDB (`mongodb://localhost:27017/vcbot`) or a free [MongoDB Atlas](https://www.mongodb.com/atlas) cluster. Put the URI in `.env`.
+
+### 4. YouTube cookies
+
+YouTube may block downloads from datacenter IPs ("Sign in to confirm you're not a bot"). To avoid this, export your browser's YouTube cookies in **Netscape format** and save them to `cookies/yt.txt`.
+
+- Easiest method: a browser extension such as *Get cookies.txt LOCALLY*.
+- The file must be Netscape/HTTP-cookie format (`# Netscape HTTP Cookie File` header followed by tab-separated rows).
+
+---
+
+## ⚙️ Configuration
+
+All configuration lives in `.env` (see [`.env.example`](.env.example)).
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `API_ID` | ✅ | — | Telegram app ID |
+| `API_HASH` | ✅ | — | Telegram app hash |
+| `BOT_TOKEN` | ✅ | — | Bot token from BotFather |
+| `SESSION_STRING` | ✅ | — | User-account string session |
+| `MONGODB_URI` | ✅ | `mongodb://localhost:27017/vcbot` | MongoDB connection URI |
+| `LOG_LEVEL` | — | `INFO` | Logging level |
+| `LOG_CHAT_ID` | — | `0` | Chat ID to receive log notifications |
+| `MAX_QUEUE_SIZE` | — | `100` | Max tracks per queue |
+| `MAX_CONCURRENT_CHATS` | — | `50` | Max simultaneous voice chats |
+| `MAX_PLAYLIST_TRACKS` | — | `50` | Max tracks loaded from a playlist |
+| `MAX_TRACK_DURATION` | — | `7200` | Max track length (seconds) |
+
+> **Note:** `BOT_OWNER_ID` (used for `/restart` and `/broadcast`) is **hardcoded** in `telecast/core/config.py`. Change it to your own Telegram user ID before deploying.
+
+---
+
+## 🎮 Commands
+
+Commands work with both `/` and `.` prefixes (e.g. `/play` or `.play`). Most work only in groups where the bot is present.
+
+| Command | Description |
+| --- | --- |
+| `/start` | Show the welcome message |
+| `/help` | Show help |
+| `/play <query\|url\|playlist>` | Play a song / video / playlist from YouTube |
+| `/pause` | Pause playback |
+| `/resume` | Resume playback |
+| `/skip` | Skip to the next track |
+| `/stop` / `/end` | Stop and leave the voice chat |
+| `/seek <seconds>` | Seek forward (+) or backward (−) |
+| `/rewind` | Rewind 10 seconds |
+| `/vcmute` | Mute the voice chat |
+| `/vcunmute` | Unmute the voice chat |
+| `/playlist` | Show the current queue |
+| `/clearplaylist` | Clear upcoming tracks |
+| `/settings` | Open the settings menu (admin) |
+| `/vcadmin` | Grant voice-chat control to a user (admin) |
+| `/vcunadmin` | Revoke voice-chat control (admin) |
+| `/rank` / `/ranking` | View group rankings |
+| `/status` | Show bot statistics |
+| `/restart` | Restart the bot (owner) |
+| `/broadcast` | Broadcast a replied-to message (owner) |
+
+### Player inline buttons
+
+The now-playing message includes a full control bar:
+
+- ⏯ Pause / Resume, ⏭ Skip, ⏹ Stop
+- 🔁 Loop (off / track / queue)
+- ⏪ Rewind, ⏩ Seek, 🔃 Replay
+- 🔊 Volume, 🔇/🔊 Mute / Unmute
+- 🎚 Effects & ⏩ Speed menus
+- 📜 Queue pager, 🔀 Shuffle, 🗑 Clear queue
+
+---
+
+## 🎚 Audio effects & speed
+
+| Effect | Button |
+| --- | --- |
+| Normal | 🎵 Normal |
+| Bass Boost | 🔊 Bass Boost |
+| Nightcore | ⚡ Nightcore |
+| Slowed | 🐢 Slowed |
+| Lofi | 📻 Lofi |
+| 8D | 🎧 8D |
+
+Playback speed presets: `0.5x`, `0.75x`, `1.0x`, `1.25x`, `1.5x`, `2.0x`.
+
+---
+
+## ⚙️ Settings
+
+Open with `/settings` (admin). Available toggles:
+
+- **Mode** — audio or video
+- **Quality** — 360p / 480p / 720p / 1080p
+- **Audio quality** — low / medium / high
+- **Autoplay**
+- **Title update** — update the live call title to the current track
+- **Admin-only mode** — restrict playback to admins/VC-admins
+- **Shuffle**
+- **Mention requester**
+- **Playlist permission** — who may load playlists (everyone / admins)
+
+---
+
+## 🏆 Rankings
+
+`/rank` renders a banner image of top listeners.
+
+- **Daily** and **Weekly** — per-group.
+- **Global** — across all groups.
+
+Switch between them using the inline buttons on the ranking message.
+
+---
+
+## ❓ Troubleshooting
+
+| Problem | Fix |
+| --- | --- |
+| **"Sign in to confirm you're not a bot"** | YouTube is bot-checking your IP. Add/refresh `cookies/yt.txt`, or route through a proxy/residential IP. |
+| **"Network is unreachable" to `googlevideo.com`** | YouTube CDN is unreachable from your server. Try a different region or a proxy. |
+| **Download fails for some tracks** | Make sure `yt-dlp` is up to date (`pip install -U yt-dlp`). |
+| **User account won't join the call** | The user account must be in the group and the bot must be admin. |
+| **Title doesn't update** | The user account needs the **"Manage Voice Chats"** admin permission. |
+| **`SESSION_STRING` invalid** | Regenerate the string session (see Setup). |
+
+---
+
+## 🐛 Known Issues
+
+### Bot doesn't leave the voice chat when an audio effect is applied
+
+When a track is playing with an **audio effect** (Bass Boost, Nightcore, Slowed, Lofi, or 8D), the bot may not auto-leave the voice chat after the track finishes. With effects **disabled** (🎵 Normal), the bot leaves correctly.
+
+**Why this happens:** effects are applied by routing the stream through an FFmpeg audio-filter chain (`--audio -x:mid -af <filter>`). That filter chain can stop the bot from receiving the stream-end signal it relies on to know playback has finished. The rate/speed-based effects (Nightcore, Slowed, Lofi) use `asetrate`, which also shifts the output duration away from the track's reported duration — so the bot's fallback end-of-stream timer no longer matches either.
+
+**For contributors:** the fix belongs in `telecast/services/stream.py` (end-of-stream detection — the `stream_end` handler and `_monitor_stream`) and `telecast/services/effects.py` (how the FFmpeg filter chain is built). The goal is for the bot to reliably detect that a *filtered* stream has finished and then leave the call.
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome!
+
+1. Fork the repo and clone your fork.
+2. Install **Python 3.11** and the dependencies (`pip install -r requirements.txt`).
+3. Make your changes, keeping the style consistent with the rest of the project.
+4. Test by running the bot (`python3.11 bot.py`) and checking `logs/bot.log`.
+5. Open a pull request describing what changed and why.
+
+Don't commit secrets — `.env`, `*.session*`, and `cookies/yt.txt` are gitignored.
+
+---
+
+## 💬 Support
+
+- **Update channel:** [@itsSmartDev](https://t.me/itsSmartDev)
+- **Discussion chat:** [@DevChatZone](https://t.me/DevChatZone)
+
+---
+
+## 📄 License & credits
+
+This project is licensed under the **[MIT License](LICENSE)**. You are free to use, copy, modify, merge, publish, distribute, sublicense, and/or sell the software, provided the copyright notice above is included in all copies or substantial portions.
+
+© [@itsSmartDev](https://github.com/itsSmartDev) — copyright holder.
+
+Built with [Pyrogram](https://github.com/pyrogram/pyrogram) (via the *kurigram* fork), [py-tgcalls](https://github.com/pytgcalls/pytgcalls), [ntgcalls](https://github.com/pytgcalls/ntgcalls), [yt-dlp](https://github.com/yt-dlp/yt-dlp), [MongoDB/motor](https://www.mongodb.com/docs/drivers/motor/), [Pillow](https://python-pillow.org/) and [numpy](https://numpy.org/).
+
+---
+
+## Ethical Notice 🔔
+
+> **Ethics Reminder:** Simply modifying a few lines of code does not constitute original authorship. When forking a project, always fork responsibly and give proper credit to the original creators.
