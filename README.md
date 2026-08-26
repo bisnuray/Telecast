@@ -99,7 +99,7 @@ python3.11 bot.py
 
 The bot uses **two** accounts:
 
-- `vc_music_bot` — your bot (runs on `BOT_TOKEN`).
+- `telecast` — your bot (runs on `BOT_TOKEN`).
 - `user_client` — a **user** account (runs on `SESSION_STRING`). This is the account that actually joins the voice chat and streams, because Telegram requires a *user* (not a bot) to stream audio in a voice chat.
 
 Generate the session string using [@TgDevToolBot](https://t.me/TgDevToolBot):
