@@ -21,6 +21,16 @@ Stream YouTube tracks (or your own audio/video files) straight into a group voic
 
 ---
 
+## 📑 Jump to
+
+- [Features](#features) · [Requirements](#requirements) · [Quick start](#quick-start) · [Setup](#setup) · [Configuration](#configuration)
+- [Commands](#commands) · [Audio effects](#effects) · [Settings](#settings) · [Rankings](#rankings)
+- [Troubleshooting](#troubleshooting) · [Known Issues](#known-issues) · [Contributing](#contributing) · [Support](#support) · [License](#license)
+
+---
+
+<a id="features"></a>
+
 ## ✨ Features
 
 - 🎵 **Music & video streaming** — play YouTube audio *or* video into a voice chat.
@@ -40,6 +50,8 @@ Stream YouTube tracks (or your own audio/video files) straight into a group voic
 
 ---
 
+<a id="requirements"></a>
+
 ## 📋 Requirements
 
 **Runtime (not installable via pip):**
@@ -57,6 +69,8 @@ Stream YouTube tracks (or your own audio/video files) straight into a group voic
 Python packages are listed in [`requirements.txt`](requirements.txt) and installed automatically by `run.sh`.
 
 ---
+
+<a id="quick-start"></a>
 
 ## 🚀 Quick start
 
@@ -86,6 +100,8 @@ python3.11 bot.py
 ```
 
 ---
+
+<a id="setup"></a>
 
 ## 🔐 Setup in detail
 
@@ -123,6 +139,8 @@ YouTube may block downloads from datacenter IPs ("Sign in to confirm you're not 
 
 ---
 
+<a id="configuration"></a>
+
 ## ⚙️ Configuration
 
 All configuration lives in `.env` (see [`.env.example`](.env.example)).
@@ -144,6 +162,8 @@ All configuration lives in `.env` (see [`.env.example`](.env.example)).
 > **Note:** `BOT_OWNER_ID` (used for `/restart`, `/broadcast`, and `/logs`) is **hardcoded** in `telecast/core/config.py`. Change it to your own Telegram user ID before deploying.
 
 ---
+
+<a id="commands"></a>
 
 ## 🎮 Commands
 
@@ -186,6 +206,8 @@ The now-playing message includes a full control bar:
 
 ---
 
+<a id="effects"></a>
+
 ## 🎚 Audio effects & speed
 
 | Effect | Button |
@@ -200,6 +222,8 @@ The now-playing message includes a full control bar:
 Playback speed presets: `0.5x`, `0.75x`, `1.0x`, `1.25x`, `1.5x`, `2.0x`.
 
 ---
+
+<a id="settings"></a>
 
 ## ⚙️ Settings
 
@@ -217,6 +241,8 @@ Open with `/settings` (admin). Available toggles:
 
 ---
 
+<a id="rankings"></a>
+
 ## 🏆 Rankings
 
 `/rank` renders a banner image of top listeners.
@@ -227,6 +253,8 @@ Open with `/settings` (admin). Available toggles:
 Switch between them using the inline buttons on the ranking message.
 
 ---
+
+<a id="troubleshooting"></a>
 
 ## ❓ Troubleshooting
 
@@ -241,6 +269,8 @@ Switch between them using the inline buttons on the ranking message.
 
 ---
 
+<a id="known-issues"></a>
+
 ## 🐛 Known Issues
 
 ### Bot doesn't leave the voice chat when an audio effect is applied
@@ -250,6 +280,8 @@ When a track plays with an **audio effect** (Bass Boost, Nightcore, Slowed, Lofi
 The effect runs through an FFmpeg filter chain that can block the end-of-stream signal, so the bot doesn't detect that the track has finished. The fix belongs in `telecast/services/stream.py` (end-of-stream detection) and `telecast/services/effects.py` (filter chain) — contributions welcome!
 
 ---
+
+<a id="contributing"></a>
 
 ## 🤝 Contributing
 
@@ -265,12 +297,16 @@ Don't commit secrets — `.env`, `*.session*`, and `cookies/yt.txt` are gitignor
 
 ---
 
+<a id="support"></a>
+
 ## 💬 Support
 
 - **Update channel:** [@itsSmartDev](https://t.me/itsSmartDev)
 - **Discussion chat:** [@DevChatZone](https://t.me/DevChatZone)
 
 ---
+
+<a id="license"></a>
 
 ## 📄 License & credits
 
