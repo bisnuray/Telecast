@@ -141,7 +141,7 @@ All configuration lives in `.env` (see [`.env.example`](.env.example)).
 | `MAX_PLAYLIST_TRACKS` | — | `50` | Max tracks loaded from a playlist |
 | `MAX_TRACK_DURATION` | — | `7200` | Max track length (seconds) |
 
-> **Note:** `BOT_OWNER_ID` (used for `/restart` and `/broadcast`) is **hardcoded** in `telecast/core/config.py`. Change it to your own Telegram user ID before deploying.
+> **Note:** `BOT_OWNER_ID` (used for `/restart`, `/broadcast`, and `/logs`) is **hardcoded** in `telecast/core/config.py`. Change it to your own Telegram user ID before deploying.
 
 ---
 
@@ -171,6 +171,7 @@ Commands work with both `/` and `.` prefixes (e.g. `/play` or `.play`). Most wor
 | `/status` | Show bot statistics |
 | `/restart` | Restart the bot (owner) |
 | `/broadcast` | Broadcast a replied-to message (owner) |
+| `/logs` | View and clear the bot log file (owner) |
 
 ### Player inline buttons
 
@@ -244,11 +245,9 @@ Switch between them using the inline buttons on the ranking message.
 
 ### Bot doesn't leave the voice chat when an audio effect is applied
 
-When a track is playing with an **audio effect** (Bass Boost, Nightcore, Slowed, Lofi, or 8D), the bot may not auto-leave the voice chat after the track finishes. With effects **disabled** (🎵 Normal), the bot leaves correctly.
+When a track plays with an **audio effect** (Bass Boost, Nightcore, Slowed, Lofi, or 8D), the bot may not auto-leave the voice chat after it ends. With **🎵 Normal**, it leaves correctly.
 
-**Why this happens:** effects are applied by routing the stream through an FFmpeg audio-filter chain (`--audio -x:mid -af <filter>`). That filter chain can stop the bot from receiving the stream-end signal it relies on to know playback has finished. The rate/speed-based effects (Nightcore, Slowed, Lofi) use `asetrate`, which also shifts the output duration away from the track's reported duration — so the bot's fallback end-of-stream timer no longer matches either.
-
-**For contributors:** the fix belongs in `telecast/services/stream.py` (end-of-stream detection — the `stream_end` handler and `_monitor_stream`) and `telecast/services/effects.py` (how the FFmpeg filter chain is built). The goal is for the bot to reliably detect that a *filtered* stream has finished and then leave the call.
+The effect runs through an FFmpeg filter chain that can block the end-of-stream signal, so the bot doesn't detect that the track has finished. The fix belongs in `telecast/services/stream.py` (end-of-stream detection) and `telecast/services/effects.py` (filter chain) — contributions welcome!
 
 ---
 

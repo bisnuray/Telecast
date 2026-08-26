@@ -14,3 +14,6 @@ cache/
 logs/
 *.log
 unknown_errors.txt
+
+# Local dev
+CLAUDE.md
