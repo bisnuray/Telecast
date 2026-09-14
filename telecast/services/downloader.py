@@ -27,11 +27,14 @@ class MediaDownloader:
         self._base_opts = {
             'quiet': True,
             'no_warnings': True,
+            'noprogress': True,
             'geo_bypass': True,
             'nocheckcertificate': True,
-            'socket_timeout': 10,
+            'source_address': '0.0.0.0',
+            'socket_timeout': 20,
             'retries': 3,
             'fragment_retries': 3,
+            'extractor_retries': 2,
         }
 
         if os.path.exists(self.cookies_path):
@@ -264,6 +267,47 @@ class MediaDownloader:
     async def is_live_stream(self, url: str) -> bool:
         metadata = await self.get_metadata(url)
         return metadata.get('is_live', False) if metadata else False
+
+    async def search_one(self, query: str) -> Optional[Dict]:
+        if not query:
+            return None
+
+        opts = self._make_opts({
+            'skip_download': True,
+            'noplaylist': True,
+            'default_search': 'ytsearch1:',
+        })
+
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = await self._run_sync(lambda: ydl.extract_info(query, download=False))
+        except Exception as e:
+            logger.error(f"Failed to search YouTube for '{query}': {e}")
+            return None
+
+        if not info:
+            return None
+
+        entries = info.get('entries') or ([info] if info.get('id') else [])
+        entry = next((e for e in entries if e and e.get('id')), None)
+        if not entry:
+            return None
+
+        video_id = entry.get('id')
+        url = entry.get('webpage_url') or f"https://www.youtube.com/watch?v={video_id}"
+        metadata = {
+            'title': entry.get('title', 'Unknown'),
+            'duration': int(entry.get('duration') or 0),
+            'thumbnail': entry.get('thumbnail', ''),
+            'uploader': entry.get('uploader') or entry.get('channel', 'Unknown'),
+            'url': url,
+            'is_live': entry.get('is_live', False),
+            '_raw_info': entry,
+        }
+
+        _metadata_cache[url] = (metadata, time.monotonic())
+        logger.info(f"Search resolved: {metadata['title']} ({metadata['duration']}s)")
+        return metadata
 
     async def search_youtube(self, query: str, max_results: int = 10) -> list:
         try:
