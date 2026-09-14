@@ -8,7 +8,7 @@ from telecast.core.config import Config
 class FilteredStderr:
     def __init__(self, original_stderr):
         self.original_stderr = original_stderr
-        self.buffer = []
+        self._pending = []
         self.suppress_next = False
 
     def write(self, text):
@@ -26,6 +26,16 @@ class FilteredStderr:
 
     def flush(self):
         self.original_stderr.flush()
+
+    def isatty(self):
+        return False
+
+    def fileno(self):
+        return self.original_stderr.fileno()
+
+    @property
+    def encoding(self):
+        return getattr(self.original_stderr, "encoding", None) or "utf-8"
 
 sys.stderr = FilteredStderr(sys.stderr)
 
