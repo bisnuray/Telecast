@@ -191,8 +191,7 @@ async def play_command(client: Client, message: Message, player, tgcalls):
             return
 
         if source_type == 'search':
-            search_url = f"ytsearch1:{source_value}"
-            metadata = await downloader.get_metadata(search_url)
+            metadata = await downloader.search_one(source_value)
         else:
             metadata = await downloader.get_metadata(source_value)
 
