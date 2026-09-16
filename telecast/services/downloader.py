@@ -9,8 +9,11 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional
 from telecast.core.config import Config
 from telecast.core.logging import logger
+from telecast.services.yt_search import youtube_search
 
 _executor = ThreadPoolExecutor(max_workers=4)
+
+AUDIO_EXTS = ('.opus', '.webm', '.m4a', '.mp3', '.ogg', '.mp4', '.mkv')
 
 _metadata_cache: Dict[str, tuple] = {}
 _CACHE_TTL = 300
@@ -52,6 +55,29 @@ class MediaDownloader:
     def _run_sync(self, fn):
         loop = asyncio.get_running_loop()
         return loop.run_in_executor(_executor, fn)
+
+    @staticmethod
+    def _extract_video_id(url: str) -> Optional[str]:
+        if not url:
+            return None
+        match = re.search(
+            r'(?:v=|youtu\.be/|/shorts/|/embed/|/live/)([A-Za-z0-9_-]{11})', url
+        )
+        return match.group(1) if match else None
+
+    @staticmethod
+    def _safe_video_id(video_id: str) -> str:
+        return video_id.replace("'", "").replace('"', "").replace('/', '_').replace('\\', '_')
+
+    def _find_cached_file(self, video_id: Optional[str], suffix: str = "") -> Optional[str]:
+        if not video_id:
+            return None
+        safe = self._safe_video_id(video_id)
+        for ext in AUDIO_EXTS:
+            file_path = f"{Config.DOWNLOADS_DIR}/{safe}{suffix}{ext}"
+            if os.path.exists(file_path):
+                return os.path.abspath(file_path)
+        return None
 
     async def get_metadata(self, url: str) -> Optional[Dict]:
         cached = _metadata_cache.get(url)
@@ -101,14 +127,12 @@ class MediaDownloader:
 
     async def download_audio(self, url: str, info: Optional[Dict] = None) -> Optional[str]:
         try:
-            video_id = info.get('id') if info else None
-            if video_id:
-                video_id = video_id.replace("'", "").replace('"', '').replace('/', '_').replace('\\', '_')
-                for ext in ['.opus', '.webm', '.m4a', '.mp3', '.ogg', '.mp4', '.mkv']:
-                    file_path = f"{Config.DOWNLOADS_DIR}/{video_id}{ext}"
-                    if os.path.exists(file_path):
-                        logger.info(f"Cache hit - audio file exists: {file_path}")
-                        return os.path.abspath(file_path)
+            video_id = (info or {}).get('id') or self._extract_video_id(url)
+
+            cached = self._find_cached_file(video_id)
+            if cached:
+                logger.info(f"Cache hit - audio file exists: {cached}")
+                return cached
 
             opts = self._make_opts({
                 'format': 'bestaudio[ext=webm]/bestaudio[ext=opus]/bestaudio/best',
@@ -126,13 +150,10 @@ class MediaDownloader:
                     dl_info = dl_info['entries'][0] if dl_info['entries'] else None
 
             if dl_info and isinstance(dl_info, dict):
-                vid_id = dl_info.get('id', '')
-                if vid_id:
-                    for ext in ['.opus', '.webm', '.m4a', '.mp3', '.ogg', '.mp4', '.mkv']:
-                        file_path = f"{Config.DOWNLOADS_DIR}/{vid_id}{ext}"
-                        if os.path.exists(file_path):
-                            logger.info(f"Downloaded audio: {file_path}")
-                            return os.path.abspath(file_path)
+                found = self._find_cached_file(dl_info.get('id') or video_id)
+                if found:
+                    logger.info(f"Downloaded audio: {found}")
+                    return found
 
             logger.error(f"Audio file not found after download for {url}")
             return None
@@ -142,17 +163,12 @@ class MediaDownloader:
 
     async def download_video(self, url: str, quality: str = "720p", info: Optional[Dict] = None) -> Optional[str]:
         try:
-            video_id = None
-            if info:
-                video_id = info.get('id')
+            video_id = (info or {}).get('id') or self._extract_video_id(url)
 
-            if video_id:
-                video_id = video_id.replace("'", "").replace('"', '').replace('/', '_').replace('\\', '_')
-                for ext in ['.mp4', '.webm', '.mkv']:
-                    file_path = f"{Config.DOWNLOADS_DIR}/{video_id}_video{ext}"
-                    if os.path.exists(file_path):
-                        logger.info(f"Cache hit - video file exists: {file_path}")
-                        return os.path.abspath(file_path)
+            cached = self._find_cached_file(video_id, suffix="_video")
+            if cached:
+                logger.info(f"Cache hit - video file exists: {cached}")
+                return cached
 
             format_selector = self._get_format_selector(quality)
             opts = self._make_opts({
@@ -171,13 +187,10 @@ class MediaDownloader:
                     dl_info = dl_info['entries'][0] if dl_info['entries'] else None
 
             if dl_info and isinstance(dl_info, dict):
-                vid_id = dl_info.get('id', '')
-                if vid_id:
-                    for ext in ['.mp4', '.webm', '.mkv']:
-                        file_path = f"{Config.DOWNLOADS_DIR}/{vid_id}_video{ext}"
-                        if os.path.exists(file_path):
-                            logger.info(f"Downloaded video: {file_path}")
-                            return os.path.abspath(file_path)
+                found = self._find_cached_file(dl_info.get('id') or video_id, suffix="_video")
+                if found:
+                    logger.info(f"Downloaded video: {found}")
+                    return found
 
             logger.error(f"Downloaded video file not found for {url}")
             return None
@@ -272,6 +285,18 @@ class MediaDownloader:
         if not query:
             return None
 
+        metadata = await youtube_search.search_one(query)
+        if metadata:
+            _metadata_cache[metadata['url']] = (metadata, time.monotonic())
+            return metadata
+
+        logger.warning(f"InnerTube search returned nothing for {query!r}; falling back to yt-dlp")
+        return await self._search_one_ytdlp(query)
+
+    async def _search_one_ytdlp(self, query: str) -> Optional[Dict]:
+        if not query:
+            return None
+
         opts = self._make_opts({
             'skip_download': True,
             'noplaylist': True,
@@ -310,6 +335,17 @@ class MediaDownloader:
         return metadata
 
     async def search_youtube(self, query: str, max_results: int = 10) -> list:
+        if not query:
+            return []
+
+        results = await youtube_search.search(query, limit=max_results)
+        if results:
+            return results
+
+        logger.warning(f"InnerTube search returned nothing for {query!r}; falling back to yt-dlp")
+        return await self._search_youtube_ytdlp(query, max_results)
+
+    async def _search_youtube_ytdlp(self, query: str, max_results: int = 10) -> list:
         try:
             search_url = f"ytsearch{max_results}:{query}"
             opts = self._make_opts({
