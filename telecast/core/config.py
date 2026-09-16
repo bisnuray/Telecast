@@ -24,6 +24,8 @@ class Config:
     DOWNLOADS_DIR = "downloads"
     LOGS_DIR = "logs"
 
+    PREFETCH_ENABLED = os.getenv("PREFETCH_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+
     DEFAULT_QUALITY = "720p"
     DEFAULT_AUDIO_BITRATE = "128k"
     DEFAULT_VIDEO_BITRATE = "1000k"
