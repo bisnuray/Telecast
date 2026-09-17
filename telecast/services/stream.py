@@ -1,6 +1,7 @@
 # Copyright (C) @itsSmartDev
 
 import asyncio
+import time
 from typing import Dict, Optional, Callable, Set
 from pytgcalls import PyTgCalls
 from pytgcalls.types import MediaStream, AudioQuality
@@ -123,7 +124,8 @@ class TGCallsManager:
                     if chat_id not in self.streams:
                         return
                     logger.info(f"VC was closed by admin in {chat_id}")
-                    await self._handle_vc_terminated(chat_id, "closed")
+                    actor = await self._get_vc_end_actor(chat_id)
+                    await self._handle_vc_terminated(chat_id, "closed", actor)
                 except Exception as e:
                     logger.error(f"Error in closed_voice_chat handler: {e}")
 
@@ -263,7 +265,68 @@ class TGCallsManager:
             logger.debug(f"cpu_usage unavailable: {e}")
             return None
 
-    async def _handle_vc_terminated(self, chat_id: int, reason: str):
+    async def _get_vc_end_actor(self, chat_id: int) -> Optional[Dict]:
+        if not self.client:
+            return None
+        try:
+            from pyrogram.raw.functions.channels import GetAdminLog
+            from pyrogram.raw.types import (
+                ChannelAdminLogEventsFilter,
+                ChannelAdminLogEventActionDiscardGroupCall,
+                InputChannel,
+                InputPeerChannel,
+            )
+        except ImportError:
+            return None
+
+        try:
+            peer = await self.client.resolve_peer(chat_id)
+        except Exception as e:
+            logger.debug(f"Could not resolve {chat_id} for VC end lookup: {e}")
+            return None
+        if not isinstance(peer, InputPeerChannel):
+            return None
+
+        channel = InputChannel(channel_id=peer.channel_id, access_hash=peer.access_hash)
+        for attempt in range(3):
+            try:
+                result = await self.client.invoke(
+                    GetAdminLog(
+                        channel=channel,
+                        q="",
+                        max_id=0,
+                        min_id=0,
+                        limit=20,
+                        events_filter=ChannelAdminLogEventsFilter(group_call=True),
+                    )
+                )
+            except Exception as e:
+                logger.debug(f"VC end actor unavailable in {chat_id}: {e}")
+                return None
+
+            for event in result.events:
+                if not isinstance(event.action, ChannelAdminLogEventActionDiscardGroupCall):
+                    continue
+                if time.time() - event.date > 90:
+                    continue
+                name = next(
+                    (u.first_name for u in result.users if u.id == event.user_id), None
+                )
+                if not name:
+                    try:
+                        name = (await self.client.get_users(event.user_id)).first_name
+                    except Exception:
+                        name = None
+                if name:
+                    logger.info(f"VC in {chat_id} was ended by {name} ({event.user_id})")
+                    return {'id': event.user_id, 'name': name}
+                return None
+
+            if attempt < 2:
+                await asyncio.sleep(0.6)
+        return None
+
+    async def _handle_vc_terminated(self, chat_id: int, reason: str, actor: Optional[str] = None):
         self._cancel_empty_vc_timer(chat_id)
         if chat_id in self._monitor_tasks:
             self._monitor_tasks[chat_id].cancel()
@@ -274,7 +337,7 @@ class TGCallsManager:
         logger.info(f"VC terminated ({reason}) in {chat_id} — state cleaned up")
         if self.on_vc_closed_callback:
             try:
-                await self.on_vc_closed_callback(chat_id, reason)
+                await self.on_vc_closed_callback(chat_id, reason, actor)
             except Exception as e:
                 logger.error(f"Error in on_vc_closed_callback for {chat_id}: {e}")
 

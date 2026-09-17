@@ -1,10 +1,15 @@
 # Copyright (C) @itsSmartDev
 
 import asyncio
+import html
+import os
 from typing import Optional, Dict
+from pyrogram.enums import ParseMode
+from telecast.core.config import Config
 from telecast.db import db
 from telecast.services.queue import queue_manager
 from telecast.services.downloader import downloader
+from telecast.services.live_stream import live_stream
 from telecast.services.processor import processor
 from telecast.utils.auto_join import auto_join_handler
 from telecast.core.errors import FloodWaitError, TelegramServerError, StreamOperationTimeout
@@ -25,6 +30,7 @@ class PlayerController:
         self.pause_start_time: Dict[int, float] = {}
         self.total_paused_duration: Dict[int, float] = {}
         self._play_locks: Dict[int, asyncio.Lock] = {}
+        self._prefetch_tasks: Dict[int, asyncio.Task] = {}
 
         self.tgcalls.set_stream_end_callback(self._on_stream_end)
         self.tgcalls.set_vc_closed_callback(self._on_vc_closed)
@@ -37,7 +43,7 @@ class PlayerController:
         logger.info(f"Handling stream end for chat {chat_id}")
         await self.play_next(chat_id)
 
-    async def _on_vc_closed(self, chat_id: int, reason: str):
+    async def _on_vc_closed(self, chat_id: int, reason: str, actor: Optional[Dict] = None):
         logger.info(f"VC closed callback fired for {chat_id}, reason={reason}")
 
         if hasattr(ui_progress_updater, 'progress_updater') and ui_progress_updater.progress_updater:
@@ -55,19 +61,28 @@ class PlayerController:
         self.playback_start_time.pop(chat_id, None)
         self.pause_start_time.pop(chat_id, None)
         self.total_paused_duration.pop(chat_id, None)
+        self._cancel_prefetch(chat_id)
 
         if not self.bot_client:
             return
 
+        parse_mode = None
         if reason == "kicked":
             msg = "Music assistant removed from voice chat. Playback stopped."
         elif reason == "empty":
             msg = "👋 **Music assistant left the voice chat** — no one was listening."
+        elif actor:
+            name = html.escape(actor.get('name') or 'an admin')
+            uid = actor.get('id')
+            if isinstance(uid, int) and uid > 0:
+                name = f'<a href="tg://user?id={uid}">{name}</a>'
+            msg = f"Voice chat ended by <b>{name}</b>. Playback stopped."
+            parse_mode = ParseMode.HTML
         else:
             msg = "Voice chat ended by an admin. Playback stopped."
 
         try:
-            await self.bot_client.send_message(chat_id, msg)
+            await self.bot_client.send_message(chat_id, msg, parse_mode=parse_mode)
         except Exception as e:
             logger.error(f"Failed to send VC terminated message in {chat_id}: {e}")
 
@@ -99,6 +114,8 @@ class PlayerController:
 
                 if is_video:
                     download_coro = downloader.download_video(track['url'], quality, info=raw_info)
+                elif Config.STREAM_WHILE_DOWNLOAD:
+                    download_coro = downloader.start_audio_stream(track['url'], info=raw_info)
                 else:
                     download_coro = downloader.download_audio(track['url'], info=raw_info)
 
@@ -181,6 +198,8 @@ class PlayerController:
                         raw_info = track.get('_raw_info')
                         if is_video:
                             file_path = await downloader.download_video(track['url'], quality, info=raw_info)
+                        elif Config.STREAM_WHILE_DOWNLOAD:
+                            file_path = await downloader.start_audio_stream(track['url'], info=raw_info)
                         else:
                             file_path = await downloader.download_audio(track['url'], info=raw_info)
                 elif track.get('type') == 'telegram':
@@ -229,6 +248,8 @@ class PlayerController:
             self.playback_start_time[chat_id] = asyncio.get_running_loop().time()
             self.pause_start_time.pop(chat_id, None)
             self.total_paused_duration[chat_id] = 0
+
+            self._start_prefetch(chat_id)
 
             logger.info(f"Playing in {chat_id}: {track.get('title')}")
 
@@ -519,6 +540,7 @@ class PlayerController:
 
             self.pause_start_time.pop(chat_id, None)
             self.total_paused_duration.pop(chat_id, None)
+            self._cancel_prefetch(chat_id)
 
             if chat_id in self.now_playing_messages:
                 del self.now_playing_messages[chat_id]
@@ -778,6 +800,13 @@ class PlayerController:
         try:
             if not file_path:
                 return
+            if live_stream.is_stream_url(file_path):
+                real_path = live_stream.local_path(file_path)
+                finished = live_stream.is_finished(file_path)
+                live_stream.release(file_path)
+                if not real_path or not finished:
+                    return
+                file_path = real_path
             abs_path = os.path.abspath(file_path)
             is_download = 'downloads' + os.sep in abs_path or abs_path.endswith('downloads')
             is_temp = abs_path.startswith(tempfile.gettempdir()) or abs_path.startswith('/tmp/')
@@ -791,6 +820,63 @@ class PlayerController:
                 logger.warning(f"Cleanup skipped, file not found: {abs_path}")
         except Exception as e:
             logger.error(f"Failed to cleanup file {file_path}: {e}")
+
+    def _forget_prefetch(self, chat_id: int, task: asyncio.Task):
+        if self._prefetch_tasks.get(chat_id) is task:
+            self._prefetch_tasks.pop(chat_id, None)
+
+    def _cancel_prefetch(self, chat_id: int):
+        task = self._prefetch_tasks.pop(chat_id, None)
+        if task and not task.done():
+            task.cancel()
+
+    def _start_prefetch(self, chat_id: int):
+        if not Config.PREFETCH_ENABLED:
+            return
+
+        existing = self._prefetch_tasks.get(chat_id)
+        if existing and not existing.done():
+            return
+
+        try:
+            task = asyncio.create_task(self._prefetch_next(chat_id))
+        except RuntimeError:
+            return
+        self._prefetch_tasks[chat_id] = task
+        task.add_done_callback(lambda t: self._forget_prefetch(chat_id, t))
+
+    async def _prefetch_next(self, chat_id: int):
+        try:
+            queue = await queue_manager.get_queue(chat_id)
+            if len(queue) < 2:
+                return
+
+            upcoming = queue[1]
+            if upcoming.get('type') != 'youtube' or upcoming.get('is_live'):
+                return
+
+            settings = await db.get_chat_settings(chat_id)
+            if settings.get('mode') == 'video':
+                return
+
+            existing = upcoming.get('file_path')
+            if existing and os.path.exists(existing):
+                return
+
+            title = upcoming.get('title', 'Unknown')
+            started = asyncio.get_running_loop().time()
+            logger.info(f"Prefetching next track in {chat_id}: {title}")
+
+            path = await downloader.download_audio(upcoming['url'], info=upcoming.get('_raw_info'))
+            if path:
+                upcoming['file_path'] = path
+                logger.info(
+                    f"Prefetched {title!r} in {asyncio.get_running_loop().time() - started:.1f}s"
+                )
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.debug(f"Prefetch for {chat_id} failed: {e}")
 
     async def _autoplay(self, chat_id: int):
         logger.info(f"Autoplay not yet implemented for {chat_id}")
