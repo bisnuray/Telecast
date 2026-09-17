@@ -9,7 +9,6 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional
 from telecast.core.config import Config
 from telecast.core.logging import logger
-from telecast.services.live_stream import live_stream
 from telecast.services.yt_search import youtube_search
 
 _executor = ThreadPoolExecutor(max_workers=4)
@@ -280,85 +279,6 @@ class MediaDownloader:
         except Exception as e:
             logger.error(f"Failed to download audio from {url}: {e}")
             return None
-
-    async def _wait_for_part(self, safe_id: str, timeout: float = 25.0) -> Optional[str]:
-        deadline = time.monotonic() + timeout
-        prefix = f"{safe_id}."
-        while time.monotonic() < deadline:
-            try:
-                for name in os.listdir(Config.DOWNLOADS_DIR):
-                    if name.startswith(prefix) and name.endswith('.part'):
-                        return os.path.abspath(os.path.join(Config.DOWNLOADS_DIR, name))
-            except OSError:
-                pass
-            await asyncio.sleep(0.05)
-        return None
-
-    async def start_audio_stream(self, url: str, info: Optional[Dict] = None) -> Optional[str]:
-        video_id = (info or {}).get('id') or self._extract_video_id(url)
-
-        cached = self._find_cached_file(video_id)
-        if cached:
-            logger.info(f"Cache hit - audio file exists: {cached}")
-            return cached
-
-        if not video_id or not live_stream.running:
-            return await self.download_audio(url, info=info)
-
-        safe = self._safe_video_id(video_id)
-        state: Dict = {'total': 0, 'done': False, 'error': None, 'final_path': None}
-
-        def hook(progress: Dict):
-            status = progress.get('status')
-            if status == 'downloading':
-                total = progress.get('total_bytes') or progress.get('total_bytes_estimate')
-                if total:
-                    state['total'] = total
-            elif status == 'finished':
-                state['done'] = True
-
-        opts = self._make_opts({
-            'format': 'bestaudio[ext=webm]/bestaudio[ext=opus]/bestaudio/best',
-            'outtmpl': f'{Config.DOWNLOADS_DIR}/%(id)s.%(ext)s',
-            'noplaylist': True,
-            'progress_hooks': [hook],
-        })
-
-        def run():
-            try:
-                with yt_dlp.YoutubeDL(opts) as ydl:
-                    dl_info = ydl.extract_info(url, download=True)
-
-                if isinstance(dl_info, list):
-                    dl_info = dl_info[0] if dl_info else None
-                elif isinstance(dl_info, dict) and dl_info.get('entries'):
-                    dl_info = dl_info['entries'][0] if dl_info['entries'] else None
-
-                state['final_path'] = self._find_cached_file(
-                    (dl_info or {}).get('id') or video_id
-                )
-            except Exception as e:
-                state['error'] = str(e)
-                logger.error(f"Streaming download failed for {url}: {e}")
-            finally:
-                state['done'] = True
-
-        future = self._run_sync(run)
-
-        part = await self._wait_for_part(safe)
-        if not part:
-            logger.warning(f"No partial file appeared for {video_id}, waiting for full download")
-            await future
-            found = self._find_cached_file(video_id)
-            if found:
-                logger.info(f"Downloaded audio: {found}")
-                return found
-            logger.error(f"Audio file not found after download for {url}")
-            return None
-
-        stream_url = live_stream.register(part, state)
-        logger.info(f"Streaming {video_id} while downloading via {stream_url}")
-        return stream_url
 
     async def download_video(self, url: str, quality: str = "720p", info: Optional[Dict] = None) -> Optional[str]:
         try:

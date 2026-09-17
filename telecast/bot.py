@@ -10,7 +10,6 @@ from telecast.core.config import Config
 from telecast.core.logging import logger
 from telecast.db import db
 from telecast.services.stream import TGCallsManager
-from telecast.services.live_stream import live_stream
 from telecast.services.player import PlayerController
 from telecast.ui.title import TitleUpdater
 from telecast.ui.progress import ProgressUpdater
@@ -99,12 +98,6 @@ class VCMusicBot:
             monitor_logger.set_client(self.bot)
             logger.info("Monitor logger initialized")
 
-            if Config.STREAM_WHILE_DOWNLOAD:
-                if await live_stream.start():
-                    logger.info("Stream-while-downloading enabled for audio")
-                else:
-                    logger.warning("Stream-while-downloading requested but the server failed to start")
-
             self.is_running = True
 
             self.watchdog = LoopWatchdog(on_stall=self._on_loop_stall)
@@ -140,10 +133,6 @@ class VCMusicBot:
         if self.progress_updater:
             self.progress_updater.stop_all_updates()
             logger.info("Stopped all progress updates")
-
-        if live_stream.running:
-            await live_stream.stop()
-            logger.info("Live stream server stopped")
 
         if self.tgcalls_manager:
             await self.tgcalls_manager.cleanup()

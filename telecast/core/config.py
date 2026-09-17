@@ -25,8 +25,6 @@ class Config:
     LOGS_DIR = "logs"
 
     PREFETCH_ENABLED = os.getenv("PREFETCH_ENABLED", "true").lower() in ("1", "true", "yes", "on")
-    STREAM_WHILE_DOWNLOAD = os.getenv("STREAM_WHILE_DOWNLOAD", "false").lower() in ("1", "true", "yes", "on")
-    STREAM_BIND_HOST = "127.0.0.1"
 
     DEFAULT_QUALITY = "720p"
     DEFAULT_AUDIO_BITRATE = "128k"

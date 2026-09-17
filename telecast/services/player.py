@@ -9,7 +9,6 @@ from telecast.core.config import Config
 from telecast.db import db
 from telecast.services.queue import queue_manager
 from telecast.services.downloader import downloader
-from telecast.services.live_stream import live_stream
 from telecast.services.processor import processor
 from telecast.utils.auto_join import auto_join_handler
 from telecast.core.errors import FloodWaitError, TelegramServerError, StreamOperationTimeout
@@ -114,8 +113,6 @@ class PlayerController:
 
                 if is_video:
                     download_coro = downloader.download_video(track['url'], quality, info=raw_info)
-                elif Config.STREAM_WHILE_DOWNLOAD:
-                    download_coro = downloader.start_audio_stream(track['url'], info=raw_info)
                 else:
                     download_coro = downloader.download_audio(track['url'], info=raw_info)
 
@@ -198,8 +195,6 @@ class PlayerController:
                         raw_info = track.get('_raw_info')
                         if is_video:
                             file_path = await downloader.download_video(track['url'], quality, info=raw_info)
-                        elif Config.STREAM_WHILE_DOWNLOAD:
-                            file_path = await downloader.start_audio_stream(track['url'], info=raw_info)
                         else:
                             file_path = await downloader.download_audio(track['url'], info=raw_info)
                 elif track.get('type') == 'telegram':
@@ -800,13 +795,6 @@ class PlayerController:
         try:
             if not file_path:
                 return
-            if live_stream.is_stream_url(file_path):
-                real_path = live_stream.local_path(file_path)
-                finished = live_stream.is_finished(file_path)
-                live_stream.release(file_path)
-                if not real_path or not finished:
-                    return
-                file_path = real_path
             abs_path = os.path.abspath(file_path)
             is_download = 'downloads' + os.sep in abs_path or abs_path.endswith('downloads')
             is_temp = abs_path.startswith(tempfile.gettempdir()) or abs_path.startswith('/tmp/')
