@@ -7,6 +7,7 @@ from .playlists import PlaylistsMixin
 from .vc_admins import VCAdminsMixin
 from .broadcast import BroadcastMixin
 from .history import HistoryMixin
+from .audio_cache import AudioCacheMixin
 
 
 class Database(
@@ -17,6 +18,7 @@ class Database(
     VCAdminsMixin,
     BroadcastMixin,
     HistoryMixin,
+    AudioCacheMixin,
 ):
     pass
 

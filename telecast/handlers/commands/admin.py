@@ -11,6 +11,7 @@ from telecast.core.config import Config
 from telecast.core.logging import logger
 from telecast.ui.keyboards import keyboards
 from telecast.ui.messages import messages
+from telecast.utils.rich import reply_welcome, reply_help
 
 
 async def start_command(client: Client, message: Message):
@@ -23,17 +24,15 @@ async def start_command(client: Client, message: Message):
         logger.info(f"User {user_name} (ID: {message.from_user.id}) started the bot")
 
     me = await client.get_me()
-    await message.reply_text(
-        messages.start_welcome(),
-        reply_markup=keyboards.start_menu(me.username)
-    )
+    markup = keyboards.start_menu(me.username)
+    if not await reply_welcome(message, markup):
+        await message.reply_text(messages.start_welcome(), reply_markup=markup)
 
 
 async def help_command(client: Client, message: Message):
-    await message.reply_text(
-        messages.help_message(),
-        reply_markup=keyboards.help_back_button()
-    )
+    markup = keyboards.help_menu()
+    if not await reply_help(message, markup):
+        await message.reply_text(messages.help_message(), reply_markup=markup)
 
 
 def read_log_tail(max_lines: int = 50, max_chars: int = 3900) -> str:

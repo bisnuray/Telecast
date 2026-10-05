@@ -30,6 +30,7 @@ class MongoDB:
         await self.db.vc_admins.create_index([("chat_id", 1), ("user_id", 1)], unique=True)
         await self.db.broadcast_users.create_index("user_id", unique=True)
         await self.db.broadcast_groups.create_index("chat_id", unique=True)
+        await self.db.audio_cache.create_index("video_id", unique=True)
         logger.info("Database indexes created")
 
     async def close(self):

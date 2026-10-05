@@ -11,14 +11,18 @@ from telecast.core.config import Config
 from telecast.utils.permissions import permission_checker
 from telecast.ui.keyboards import keyboards
 from telecast.ui.messages import messages
+from telecast.utils.rich import edit_to_welcome, edit_to_help, edit_or_resend_text
 from telecast.core.logging import logger
 from telecast.handlers.commands import show_rankings
 from telecast.handlers.commands.admin import read_log_tail
+
+HELP_SECTIONS = {"help_basic": "basic", "help_music": "music", "help_settings": "settings"}
 
 from . import player as player_handlers
 from . import settings as settings_handlers
 from . import effects as effects_handlers
 from . import queue as queue_handlers
+from . import download as download_handlers
 
 
 async def handle_callback(client: Client, callback_query: CallbackQuery, player, user_client: Client = None):
@@ -27,21 +31,20 @@ async def handle_callback(client: Client, callback_query: CallbackQuery, player,
     message = callback_query.message
     chat_id = message.chat.id
 
-    if data == "help_menu":
-        await message.edit_text(
-            messages.help_message(),
-            reply_markup=keyboards.help_back_button()
-        )
+    if data == "help_menu" or data in HELP_SECTIONS:
         await callback_query.answer()
+        section = HELP_SECTIONS.get(data)
+        markup = keyboards.help_menu(section)
+        if not await edit_to_help(message, markup, section):
+            await edit_or_resend_text(message, messages.help_message(section), markup)
         return
 
     if data == "back_to_start":
-        me = await client.get_me()
-        await message.edit_text(
-            messages.start_welcome(),
-            reply_markup=keyboards.start_menu(me.username)
-        )
         await callback_query.answer()
+        me = await client.get_me()
+        markup = keyboards.start_menu(me.username)
+        if not await edit_to_welcome(message, markup):
+            await edit_or_resend_text(message, messages.start_welcome(), markup)
         return
 
     if data in ("log_display", "log_clear", "log_close"):
@@ -88,6 +91,24 @@ async def handle_callback(client: Client, callback_query: CallbackQuery, player,
             logger.error(f"Ranking button failed ({scope}): {e}")
         return
 
+    if data.startswith("download_"):
+        try:
+            await download_handlers.handle(client, callback_query, player)
+        except Exception as e:
+            logger.error(f"Download button failed ({data}): {e}")
+            try:
+                await callback_query.answer("❌ Error occurred", show_alert=True)
+            except Exception:
+                pass
+        return
+
+    if data.startswith(("autoplay_yes_", "autoplay_no_")):
+        try:
+            await player_handlers.handle_autoplay(client, callback_query, player)
+        except Exception as e:
+            logger.error(f"Autoplay button failed ({data}): {e}")
+        return
+
     is_group_admin = await permission_checker.is_admin(client, chat_id, user_id)
     is_vc_admin = await db.is_vc_admin(chat_id, user_id)
 
@@ -105,9 +126,9 @@ async def handle_callback(client: Client, callback_query: CallbackQuery, player,
         )) or data == "noop":
             await player_handlers.handle(client, callback_query, player, user_client, settings)
         elif data.startswith((
-            "settings_", "toggle_mode_", "toggle_autoplay_", "toggle_title_",
+            "settings_", "toggle_mode_", "toggle_autoplay_", "toggle_autoplay_perm_", "toggle_title_",
             "toggle_admin_", "toggle_shuffle_", "toggle_mention_",
-            "toggle_playlist_perm_", "toggle_autoreply_", "quality_",
+            "toggle_playlist_perm_", "toggle_autoreply_", "toggle_vc_welcome_", "quality_",
             "setquality_", "audioquality_", "setaudioquality_",
         )):
             await settings_handlers.handle(client, callback_query, player, user_client, settings)

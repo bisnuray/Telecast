@@ -7,7 +7,9 @@ import os
 import random
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+import io
+
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 try:
     import numpy as _np
@@ -16,8 +18,8 @@ except Exception:
 
 
 W, H = 1536, 1024
-MARGIN = 40
-GAP = 24
+MARGIN = 30
+GAP = 22
 
 FONT_CANDIDATES = {
     "display_regular": [
@@ -505,45 +507,6 @@ def gradient_rect(base: Image.Image, rect: tuple[int, int, int, int], c1, c2, ra
     base.alpha_composite(grad, (x0, y0))
 
 
-def _background_gradient() -> Image.Image:
-    if _np is not None:
-        x = _np.arange(W, dtype=_np.float64)[None, :]
-        y = _np.arange(H, dtype=_np.float64)[:, None]
-        g1 = _np.clip(1 - _np.hypot((x - 280) / 780, (y - 110) / 540), 0, None)
-        g2 = _np.clip(1 - _np.hypot((x - 1280) / 820, (y - 290) / 620), 0, None)
-        g3 = _np.clip(1 - _np.hypot((x - 760) / 1050, (y - 880) / 520), 0, None)
-        out = _np.empty((H, W, 4), dtype=_np.uint8)
-        out[..., 0] = (5 + 22 * g1 + 15 * g2 + 8 * g3).astype(_np.uint8)
-        out[..., 1] = (8 + 9 * g1 + 8 * g2 + 18 * g3).astype(_np.uint8)
-        out[..., 2] = (22 + 36 * g1 + 27 * g2 + 22 * g3).astype(_np.uint8)
-        out[..., 3] = 255
-        return Image.fromarray(out, "RGBA")
-    img = Image.new("RGBA", (W, H), (*PALETTE["bg0"], 255))
-    px = img.load()
-    for y in range(H):
-        for x in range(W):
-            g1 = max(0, 1 - math.hypot((x - 280) / 780, (y - 110) / 540))
-            g2 = max(0, 1 - math.hypot((x - 1280) / 820, (y - 290) / 620))
-            g3 = max(0, 1 - math.hypot((x - 760) / 1050, (y - 880) / 520))
-            px[x, y] = (int(5 + 22 * g1 + 15 * g2 + 8 * g3), int(8 + 9 * g1 + 8 * g2 + 18 * g3), int(22 + 36 * g1 + 27 * g2 + 22 * g3), 255)
-    return img
-
-
-def background(seed: int) -> Image.Image:
-    img = _background_gradient()
-    d = ImageDraw.Draw(img, "RGBA")
-    rng = random.Random(seed)
-    for _ in range(220):
-        x, y = rng.randrange(W), rng.randrange(H)
-        col = rng.choice([(139, 92, 246), (34, 211, 238), (236, 72, 153)])
-        d.ellipse((x, y, x + 2, y + 2), fill=(*col, rng.randrange(20, 90)))
-    for x in range(0, W, 36):
-        d.line((x, 0, x, H), fill=(255, 255, 255, 5), width=1)
-    for y in range(0, H, 36):
-        d.line((0, y, W, y), fill=(255, 255, 255, 5), width=1)
-    return img
-
-
 def icon_people(d: ImageDraw.ImageDraw, x: int, y: int, s: int, col):
     d.ellipse((x + s * 0.36, y + s * 0.08, x + s * 0.64, y + s * 0.36), fill=col)
     d.rounded_rectangle((x + s * 0.23, y + s * 0.42, x + s * 0.77, y + s * 0.83), int(s * 0.16), fill=col)
@@ -586,165 +549,306 @@ def draw_crown(d: ImageDraw.ImageDraw, x: int, y: int, s: int, col):
     d.rounded_rectangle((x + s * 0.08, y + s * 0.72, x + s * 0.92, y + s * 0.88), 2, fill=col)
 
 
+
+NAVY = (6, 10, 32)
+MEDALS = [((253, 224, 71), (217, 148, 20)), ((226, 232, 240), (130, 146, 170)), ((251, 146, 60), (186, 84, 24))]
+
+
+def mix(a, b, t: float):
+    return tuple(int(a[i] * (1 - t) + b[i] * t) for i in range(3))
+
+
+def hgradient(size: tuple[int, int], c1, c2, alpha: int = 255) -> Image.Image:
+    ww, hh = size
+    strip = Image.new("RGBA", (ww, 1))
+    sp = strip.load()
+    for x in range(ww):
+        sp[x, 0] = (*mix(c1, c2, x / max(1, ww - 1)), alpha)
+    return strip.resize((ww, max(1, hh)))
+
+
+def vgradient(size: tuple[int, int], c1, c2, a1: int = 255, a2: int = 255) -> Image.Image:
+    ww, hh = size
+    strip = Image.new("RGBA", (1, hh))
+    sp = strip.load()
+    for y in range(hh):
+        t = y / max(1, hh - 1)
+        sp[0, y] = (*mix(c1, c2, t), int(a1 * (1 - t) + a2 * t))
+    return strip.resize((max(1, ww), hh))
+
+
+def masked(img: Image.Image, mask: Image.Image) -> Image.Image:
+    img = img.copy()
+    img.putalpha(Image.composite(img.getchannel("A"), Image.new("L", img.size, 0), mask))
+    return img
+
+
+def glow(base: Image.Image, rect, radius: int, color, blur: int = 20, alpha: int = 90, outline: int = 0):
+    layer = Image.new("RGBA", base.size, (0, 0, 0, 0))
+    ld = ImageDraw.Draw(layer)
+    if outline:
+        ld.rounded_rectangle(rect, radius, outline=(*color, alpha), width=outline)
+    else:
+        ld.rounded_rectangle(rect, radius, fill=(*color, alpha))
+    base.alpha_composite(layer.filter(ImageFilter.GaussianBlur(blur)))
+
+
+def neon_card(base: Image.Image, rect, radius: int, accent, top_mix: float = 0.30, bottom_mix: float = 0.05, border: int = 2):
+    x0, y0, x1, y1 = rect
+    glow(base, rect, radius, accent, blur=14, alpha=170, outline=5)
+    w, h = x1 - x0, y1 - y0
+    body = vgradient((w, h), mix(NAVY, accent, top_mix), mix(NAVY, accent, bottom_mix), 244, 244)
+    base.alpha_composite(masked(body, rounded_mask((w, h), radius)), (x0, y0))
+    overlay_round_rect(base, rect, radius, outline=(*accent, 225), width=border)
+    overlay_round_rect(base, (x0 + 3, y0 + 3, x1 - 3, y1 - 3), radius - 3, outline=(255, 255, 255, 22), width=1)
+
+
+def gradient_text(base: Image.Image, xy: tuple[int, int], text: str, font, c1, c2, glow_rgb=None):
+    d = ImageDraw.Draw(base)
+    l, t, r, b = d.textbbox((0, 0), text, font=font)
+    mask = Image.new("L", (r - l + 8, b - t + 8), 0)
+    ImageDraw.Draw(mask).text((4 - l, 4 - t), text, font=font, fill=255)
+    pos = (xy[0] + l - 4, xy[1] + t - 4)
+    if glow_rgb:
+        halo = Image.new("RGBA", base.size, (0, 0, 0, 0))
+        halo.paste((*glow_rgb, 150), (pos[0], pos[1]), mask)
+        base.alpha_composite(halo.filter(ImageFilter.GaussianBlur(12)))
+    fill = hgradient(mask.size, c1, c2)
+    fill.putalpha(mask)
+    base.alpha_composite(fill, pos)
+
+
+def background(seed: int) -> Image.Image:
+    rng = random.Random(seed)
+    img = Image.new("RGBA", (W, H), (*NAVY, 255))
+    layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ld = ImageDraw.Draw(layer)
+    for cx, cy, r, col, a in [
+        (260, 80, 420, (40, 70, 200), 120), (1300, 140, 420, (150, 50, 200), 90),
+        (780, 120, 360, (50, 110, 230), 70), (140, 880, 380, (90, 50, 210), 70),
+        (1420, 900, 380, (30, 150, 210), 60), (780, 1060, 560, (40, 60, 190), 80),
+    ]:
+        ld.ellipse((cx - r, cy - r, cx + r, cy + r), fill=(*col, a))
+    img.alpha_composite(layer.filter(ImageFilter.GaussianBlur(120)))
+    d = ImageDraw.Draw(img, "RGBA")
+    for _ in range(260):
+        x, y = rng.randrange(W), rng.randrange(H)
+        col = rng.choice([(139, 92, 246), (34, 211, 238), (236, 72, 153), (255, 255, 255)])
+        d.ellipse((x, y, x + 2, y + 2), fill=(*col, rng.randrange(25, 110)))
+    return img
+
+
+def draw_world_dots(base: Image.Image, seed: int):
+    d = ImageDraw.Draw(base, "RGBA")
+    rng = random.Random(seed + 3)
+    blobs = [(300, 78, 150, 40, (59, 130, 246)), (520, 62, 150, 44, (99, 102, 241)), (760, 66, 190, 46, (139, 92, 246)),
+             (990, 80, 170, 44, (217, 70, 239)), (1180, 70, 120, 36, (236, 72, 153))]
+    for cx, cy, rx, ry, col in blobs:
+        for xx in range(-rx, rx, 9):
+            for yy in range(-ry, ry, 9):
+                if (xx / rx) ** 2 + (yy / ry) ** 2 < rng.uniform(0.5, 1.0):
+                    d.rounded_rectangle((cx + xx, cy + yy, cx + xx + 4, cy + yy + 4), 1, fill=(*col, rng.randrange(45, 130)))
+
+
+def draw_wave(base: Image.Image, x0: int, x1: int, cy: int, max_h: int, color, seed: int):
+    rng = random.Random(seed)
+    d = ImageDraw.Draw(base, "RGBA")
+    n = (x1 - x0) // 7
+    for i in range(n):
+        t = i / max(1, n - 1)
+        env = math.sin(math.pi * t) ** 1.4
+        bh = max(3, int(max_h * env * rng.uniform(0.35, 1.0)))
+        x = x0 + i * 7
+        d.line((x, cy - bh / 2, x, cy + bh / 2), fill=(*color, 215), width=3)
+    glow(base, (x0, cy - max_h // 3, x1, cy + max_h // 3), 20, color, blur=14, alpha=45)
+
+
 def draw_header(base: Image.Image, title: str, tagline: str, seed: int):
     d = ImageDraw.Draw(base, "RGBA")
-    rng = random.Random(seed + 1)
-    for cx, cy, rx, ry, col in [(575, 64, 158, 40, PALETTE["violet"]), (772, 68, 205, 48, PALETTE["cyan"]), (970, 77, 180, 44, PALETTE["pink"])]:
-        for xx in range(-rx, rx, 10):
-            for yy in range(-ry, ry, 10):
-                if (xx / rx) ** 2 + (yy / ry) ** 2 < rng.uniform(0.55, 1.04):
-                    d.rounded_rectangle((cx + xx, cy + yy, cx + xx + 4, cy + yy + 4), 1, fill=(*col, rng.randrange(40, 115)))
-    for x, accent, kind in [(150, PALETTE["cyan"], "group"), (1386, PALETTE["pink"], "sound")]:
-        shadowed_round_rect(base, (x - 78, 42, x + 78, 198), 42, (15, 22, 45, 115), (*accent, 70), blur=22, offset=(0, 8))
-        d.rounded_rectangle((x - 78, 42, x + 78, 198), 42, outline=(*accent, 100), width=1)
-        if kind == "group":
-            draw_icon(d, "group", x - 42, 80, 84, (*accent, 190))
-            d.arc((x - 55, 61, x + 55, 181), 25, 335, fill=(255, 255, 255, 55), width=2)
+    draw_world_dots(base, seed)
+    draw_wave(base, 120, 300, 140, 96, PALETTE["cyan"], seed + 11)
+    draw_wave(base, W - 300, W - 120, 140, 96, PALETTE["pink"], seed + 12)
+
+    first, _, rest = title.partition(" ")
+    tf = fit_plain_font(d, "display_bold", title, 98, 900)
+    w1, w2, sp = bbox(d, first, tf)[0], bbox(d, rest, tf)[0] if rest else 0, bbox(d, " ", tf)[0]
+    total = w1 + (sp + w2 if rest else 0)
+    x = (W - total) // 2
+    gradient_text(base, (x, 70), first, tf, (255, 255, 255), (232, 238, 255), glow_rgb=(120, 150, 255))
+    if rest:
+        gradient_text(base, (x + w1 + sp, 70), rest, tf, PALETTE["cyan"], (244, 114, 182), glow_rgb=(200, 90, 240))
+
+    pill = (484, 188, 1052, 230)
+    overlay_round_rect(base, pill, 21, fill=(10, 14, 48, 235))
+    overlay_round_rect(base, pill, 21, outline=(150, 160, 255, 210), width=2)
+    pf = f("sans_bold", 20)
+    sw = sum(bbox(d, ch, pf)[0] + 7 for ch in tagline.upper())
+    cx0 = (W - sw) // 2
+    for ch in tagline.upper():
+        d.text((cx0, 197), ch, font=pf, fill=(236, 240, 255, 245))
+        cx0 += bbox(d, ch, pf)[0] + 7 if ch != " " else 14
+    d.line((190, 214, 468, 214), fill=(*PALETTE["cyan"], 160), width=2)
+    d.line((1068, 214, 1346, 214), fill=(*PALETTE["pink"], 160), width=2)
+
+
+def _initial(name: str) -> str:
+    for ch in name:
+        if ch.isalnum():
+            return ch.upper()
+    return "?"
+
+
+def avatar_tile(data: bytes | None, kind: str, name: str, size: int, accent) -> Image.Image:
+    ss = size * 3
+    if data:
+        try:
+            img = ImageOps.fit(Image.open(io.BytesIO(data)).convert("RGBA"), (ss, ss), Image.Resampling.LANCZOS)
+        except Exception:
+            img = None
+    else:
+        img = None
+    if img is None:
+        img = vgradient((ss, ss), mix(accent, (255, 255, 255), 0.18), mix(accent, NAVY, 0.55))
+        td = ImageDraw.Draw(img)
+        if kind == "music":
+            draw_icon(td, "music", int(ss * 0.27), int(ss * 0.25), int(ss * 0.5), (255, 255, 255, 235))
+        elif kind == "group" and not any(c.isalnum() for c in name):
+            draw_icon(td, "group", int(ss * 0.2), int(ss * 0.2), int(ss * 0.6), (255, 255, 255, 235))
         else:
-            d.arc((x - 52, 71, x + 52, 169), 190, 350, fill=(*accent, 190), width=5)
-            d.rounded_rectangle((x - 58, 113, x - 32, 166), 11, outline=(34, 211, 238, 170), width=4)
-            d.rounded_rectangle((x + 32, 113, x + 58, 166), 11, outline=(*accent, 170), width=4)
-            d.line([(x - 36 + i, 139 + math.sin(i / 3.5) * 10 + math.sin(i / 1.4) * 3) for i in range(78)], fill=(236, 72, 153, 210), width=3)
-    title_font = f("display_bold", 94)
-    tw, _ = bbox(d, title, title_font)
-    x = (W - tw) // 2
-    d.text((x, 70), title, font=title_font, fill=(246, 248, 252, 255), stroke_width=1, stroke_fill=(9, 12, 23, 220))
-    d.line((x + 4, 177, x + tw - 4, 177), fill=(255, 255, 255, 25), width=1)
-    pill = (492, 202, 1044, 240) if len(tagline) > 18 else (515, 202, 1021, 240)
-    gradient_rect(base, pill, (36, 42, 78), (53, 31, 76), 19, 205)
-    d.rounded_rectangle(pill, 19, outline=(255, 255, 255, 32), width=1)
-    tf = f("mono", 22)
-    ttw, _ = bbox(d, tagline, tf)
-    d.text(((W - ttw) // 2, 209), tagline, font=tf, fill=(202, 213, 255, 235))
-    d.line((342, 221, 472, 221), fill=(*PALETTE["cyan"], 135), width=2)
-    d.line((1064, 221, 1194, 221), fill=(*PALETTE["pink"], 135), width=2)
+            ch = _initial(name)
+            td.text((ss // 2, ss // 2), ch, font=text_font(run_type(ch), int(ss * 0.5), "bold"), fill=(255, 255, 255, 245), anchor="mm")
+    mask = Image.new("L", (ss, ss), 0)
+    md = ImageDraw.Draw(mask)
+    if kind == "music":
+        md.rounded_rectangle((0, 0, ss - 1, ss - 1), int(ss * 0.2), fill=255)
+    else:
+        md.ellipse((0, 0, ss - 1, ss - 1), fill=255)
+    img.putalpha(mask)
+    return img.resize((size, size), Image.Resampling.LANCZOS)
 
 
-def draw_panel(base: Image.Image, x: int, y: int, panel_w: int, panel_h: int, title: str, kind: str, accent, data):
+def draw_globe(d: ImageDraw.ImageDraw, x: int, y: int, s: int, col):
+    d.ellipse((x, y, x + s, y + s), outline=col, width=2)
+    d.ellipse((x + s * 0.3, y, x + s * 0.7, y + s), outline=col, width=2)
+    d.line((x, y + s / 2, x + s, y + s / 2), fill=col, width=2)
+    d.arc((x, y + s * 0.12, x + s, y + s * 0.88), 0, 360, fill=col, width=1)
+
+
+def draw_panel(base: Image.Image, x: int, y: int, w: int, h: int, title: str, kind: str, accent, data, subtitle: str = ""):
     d = ImageDraw.Draw(base, "RGBA")
-    shadowed_round_rect(base, (x, y, x + panel_w, y + panel_h), 24, (*PALETTE["card"], 218), (*accent, 88), shadow=(*accent, 34), blur=18, offset=(0, 10))
-    gradient_rect(base, (x, y, x + panel_w, y + 82), accent, (22, 28, 54), 24, 105)
-    overlay_round_rect(base, (x, y, x + panel_w, y + panel_h), 24, outline=(255, 255, 255, 22), width=1)
-    d.line((x + 24, y + 82, x + panel_w - 24, y + 82), fill=(*accent, 125), width=1)
-    overlay_round_rect(base, (x + 24, y + 22, x + 78, y + 76), 18, fill=(255, 255, 255, 18), outline=(*accent, 120), width=1)
-    draw_icon(d, kind, x + 39, y + 35, 26, (244, 247, 251, 235))
-    d.text((x + 94, y + 25), title, font=f("display_bold", 32), fill=(248, 250, 252, 250))
-    draw_crown(d, x + panel_w - 64, y + 34, 38, (*accent, 210))
+    neon_card(base, (x, y, x + w, y + h), 26, accent)
 
-    row_top = y + 96
-    row_h = 63
-    name_x = x + 92
-    value_right = x + panel_w - 29
-    text_max_w = panel_w - 222
-    for idx, (name, value, unit) in enumerate(data, 1):
-        yy = row_top + (idx - 1) * (row_h + 5)
-        rank_col = [PALETTE["gold"], PALETTE["silver"], PALETTE["bronze"]][idx - 1] if idx <= 3 else accent
-        overlay_round_rect(base, (x + 18, yy, x + panel_w - 18, yy + row_h), 16, fill=(255, 255, 255, 18 if idx == 1 else 10), outline=(255, 255, 255, 20), width=1)
-        if idx <= 3:
-            overlay_round_rect(base, (x + 18, yy, x + 24, yy + row_h), 3, fill=(*rank_col, 190))
-        badge = (x + 36, yy + 11, x + 82, yy + 57)
-        gradient_rect(base, badge, rank_col, accent, 13, 220 if idx <= 3 else 185)
-        overlay_round_rect(base, badge, 13, outline=(255, 255, 255, 42), width=1)
-        rf = f("display_bold", 28)
-        rw, rh = bbox(d, str(idx), rf)
-        d.text((x + 59 - rw / 2, yy + 24 - rh / 2), str(idx), font=rf, fill=(255, 255, 255, 255))
-        draw_mixed(base, (name_x, yy + 20), name, 24, (*PALETTE["text"], 246), "bold", max_width=text_max_w)
-        value_text = str(value)
-        vf = fit_plain_font(d, "display_bold", value_text, 31, 96)
-        d.text((value_right, yy + 11), value_text, font=vf, fill=(*accent, 255), anchor="ra")
-        d.text((value_right, yy + 41), unit, font=f("sans_regular", 16), fill=(*PALETTE["muted"], 225), anchor="ra")
+    ib = (x + 22, y + 20, x + 80, y + 78)
+    glow(base, ib, 18, accent, blur=10, alpha=130)
+    badge = vgradient((58, 58), mix(accent, (255, 255, 255), 0.22), mix(accent, NAVY, 0.35))
+    base.alpha_composite(masked(badge, rounded_mask((58, 58), 18)), (ib[0], ib[1]))
+    overlay_round_rect(base, ib, 18, outline=(255, 255, 255, 70), width=1)
+    draw_icon(d, kind, x + 36, y + 34, 30, (255, 255, 255, 250))
+    d.text((x + 98, y + 20), title, font=f("display_bold", 31), fill=(255, 255, 255, 252))
+    if subtitle:
+        d.text((x + 98, y + 59), ellipsize(d, subtitle, 15, "regular", w - 162), font=f("sans_regular", 15), fill=(205, 214, 240, 215))
+    draw_crown(d, x + w - 58, y + 32, 34, (*mix(accent, (255, 255, 255), 0.2), 235))
+    d.line((x + 22, y + 92, x + w - 22, y + 92), fill=(*accent, 90), width=1)
+
+    row_h, step = 63, 70
+    ry0 = y + 104
+    pic_kind = {"group": "group", "user": "user"}.get(kind, "music")
+    for idx in range(1, 6):
+        yy = ry0 + (idx - 1) * step
+        overlay_round_rect(base, (x + 14, yy, x + w - 14, yy + row_h), 16, fill=(255, 255, 255, 14 if idx == 1 else 8), outline=(*accent, 40), width=1)
+        if idx > len(data):
+            continue
+        row = data[idx - 1]
+        name, value, unit = row[0], row[1], row[2]
+        pic = row[3] if len(row) > 3 else None
+
+        c1, c2 = MEDALS[idx - 1] if idx <= 3 else (mix(accent, (255, 255, 255), 0.18), mix(accent, NAVY, 0.4))
+        b = (x + 26, yy + 8, x + 73, yy + 55)
+        badge = vgradient((47, 47), c1, c2)
+        base.alpha_composite(masked(badge, rounded_mask((47, 47), 13)), (b[0], b[1]))
+        overlay_round_rect(base, b, 13, outline=(255, 255, 255, 60), width=1)
+        d.text((x + 49, yy + 32), str(idx), font=f("display_bold", 27), fill=(255, 255, 255, 255), anchor="mm", stroke_width=1, stroke_fill=(20, 12, 0, 90))
+
+        av = avatar_tile(pic, pic_kind, name, 46, accent)
+        base.alpha_composite(av, (x + 84, yy + 8))
+        d.ellipse((x + 83, yy + 7, x + 131, yy + 55), outline=(255, 255, 255, 50), width=1) if pic_kind != "music" else None
+
+        name_x = x + 146
+        draw_mixed(base, (name_x, yy + 19), name, 24, (*PALETTE["text"], 250), "bold", max_width=w - 146 - 124)
+        vtxt = str(value)
+        d.text((x + w - 30, yy + 7), vtxt, font=fit_plain_font(d, "display_bold", vtxt, 31, 100), fill=(*mix(accent, (255, 255, 255), 0.25), 255), anchor="ra")
+        d.text((x + w - 30, yy + 40), unit, font=f("sans_regular", 16), fill=(*PALETTE["muted"], 235), anchor="ra")
+
+
+def draw_stat_deco(base: Image.Image, kind: str, x: int, y: int, w: int, h: int, accent, seed: int):
+    d = ImageDraw.Draw(base, "RGBA")
+    if kind == "group":
+        draw_icon(d, "group", x + w - 112, y + h - 100, 100, (*accent, 70))
+        return
+    rng = random.Random(seed)
+    n = 7
+    for i in range(n):
+        bh = int((h - 30) * (0.25 + 0.7 * (i + 1) / n) * rng.uniform(0.8, 1.0))
+        bx = x + w - 12 * n - 14 + i * 12
+        d.rounded_rectangle((bx, y + h - bh + 8, bx + 7, y + h + 8), 3, fill=(*accent, 80 + i * 12))
 
 
 def draw_stats(base: Image.Image, stats_title: str, stats_subtitle: str, stats):
     d = ImageDraw.Draw(base, "RGBA")
-    x, y = MARGIN, 728
-    w = W - MARGIN * 2
-    shadowed_round_rect(base, (x, y, x + w, y + 220), 26, (8, 13, 28, 224), (255, 255, 255, 38), shadow=(0, 0, 0, 150), blur=22, offset=(0, 12))
-    d.text((W // 2, y + 18), stats_title, font=f("display_bold", 33), fill=(248, 250, 252, 245), anchor="ma")
-    d.text((W // 2, y + 72), stats_subtitle, font=f("sans_regular", 16), fill=(*PALETTE["muted"], 205), anchor="ma")
-    card_gap = 18
-    card_w = (w - 60 - card_gap * 2) // 3
-    card_y = y + 96
-    for i, (kind, value, label, desc, accent) in enumerate(stats):
-        cx = x + 30 + i * (card_w + card_gap)
-        shadowed_round_rect(base, (cx, card_y, cx + card_w, card_y + 104), 22, (*PALETTE["card2"], 218), (*accent, 66), shadow=(*accent, 20), blur=12, offset=(0, 5))
-        overlay_round_rect(base, (cx + 22, card_y + 24, cx + 78, card_y + 80), 18, fill=(*accent, 28), outline=(*accent, 120), width=1)
-        draw_icon(d, kind, cx + 38, card_y + 39, 25, (*accent, 230))
-        value_font = fit_plain_font(d, "display_bold", value, 42 if len(value) <= 6 else 35, card_w - 176)
-        d.text((cx + 98, card_y + 20), value, font=value_font, fill=(*accent, 255))
-        d.text((cx + 100, card_y + 65), label, font=f("sans_bold", 16), fill=(241, 245, 249, 232))
-        d.text((cx + card_w - 24, card_y + 69), desc, font=f("sans_regular", 14), fill=(*PALETTE["muted"], 190), anchor="ra")
+    x, y, w, h = MARGIN, 744, W - MARGIN * 2, 234
+    accent = (96, 120, 255)
+    glow(base, (x, y, x + w, y + h), 28, accent, blur=16, alpha=130, outline=5)
+    body = vgradient((w, h), (10, 18, 56), (7, 11, 36), 245, 245)
+    base.alpha_composite(masked(body, rounded_mask((w, h), 28)), (x, y))
+    overlay_round_rect(base, (x, y, x + w, y + h), 28, outline=(*accent, 215), width=2)
 
+    gx = x + 30
+    overlay_round_rect(base, (gx - 8, y + 12, gx + 40, y + 60), 14, fill=(255, 255, 255, 14), outline=(130, 150, 255, 120))
+    draw_globe(d, gx + 2, y + 22, 28, (190, 205, 255, 235))
+    tf = f("display_bold", 34)
+    d.text((gx + 56, y + 36), stats_title, font=tf, fill=(255, 255, 255, 250), anchor="lm")
+    tw = bbox(d, stats_title, tf)[0]
+    d.text((gx + 56 + tw + 18, y + 40), ellipsize(d, stats_subtitle, 17, "regular", w - 560), font=f("sans_regular", 17), fill=(*PALETTE["muted"], 235), anchor="lm")
 
-def draw_footer(base: Image.Image):
-    d = ImageDraw.Draw(base, "RGBA")
-    y = 956
-    prefix = "Powered by "
-    brand = "Telecast"
-    pf = f("sans_regular", 20)
-    bf = f("display_bold", 22)
-    pw, _ = bbox(d, prefix, pf)
-    bw, _ = bbox(d, brand, bf)
-    total_w = pw + bw
-    start_x = (W - total_w) // 2
-    d.text((start_x, y), prefix, font=pf, fill=(200, 210, 230, 190))
-    brand_x = start_x + pw
-    glow_layer = Image.new("RGBA", base.size, (0, 0, 0, 0))
-    ImageDraw.Draw(glow_layer, "RGBA").text((brand_x, y), brand, font=bf, fill=(34, 211, 238, 120))
-    base.alpha_composite(glow_layer.filter(ImageFilter.GaussianBlur(7)))
+    pw_ = (W - MARGIN - 262, y + 14, W - MARGIN - 30, y + 58)
+    overlay_round_rect(base, pw_, 22, fill=(10, 16, 50, 220), outline=(120, 140, 255, 170), width=1)
+    pf, bf = f("sans_regular", 17), f("display_bold", 19)
+    pw1, bw1 = bbox(d, "Powered by ", pf)[0], bbox(d, "Telecast", bf)[0]
+    sx = pw_[0] + (pw_[2] - pw_[0] - pw1 - bw1) // 2
+    d.text((sx, pw_[1] + 12), "Powered by ", font=pf, fill=(210, 220, 245, 235))
+    gradient_text(base, (sx + pw1, pw_[1] + 10), "Telecast", bf, PALETTE["cyan"], (120, 140, 255))
 
-    brand_left, brand_top, brand_right, brand_bottom = d.textbbox((0, 0), brand, font=bf)
-    pad = 10
-    grad_w = brand_right - brand_left + pad * 2
-    grad_h = brand_bottom - brand_top + pad * 2
-    brand_grad = Image.new("RGBA", (grad_w, grad_h), (0, 0, 0, 0))
-    gp = brand_grad.load()
-    for gx in range(grad_w):
-        t = gx / max(1, grad_w - 1)
-        col = tuple(int((34, 211, 238)[i] * (1 - t) + (139, 92, 246)[i] * t) for i in range(3))
-        for gy in range(grad_h):
-            gp[gx, gy] = (*col, 255)
-    mask_layer = Image.new("RGBA", (grad_w, grad_h), (0, 0, 0, 0))
-    ImageDraw.Draw(mask_layer, "RGBA").text((pad - brand_left, pad - brand_top), brand, font=bf, fill=(255, 255, 255, 255))
-    *_, alpha = mask_layer.split()
-    brand_grad.putalpha(alpha)
-    base.alpha_composite(brand_grad, (brand_x + brand_left - pad, y + brand_top - pad))
-    d.line((MARGIN, y + 13, start_x - 28, y + 13), fill=(255, 255, 255, 22), width=1)
-    d.line((start_x + total_w + 28, y + 13, W - MARGIN, y + 13), fill=(255, 255, 255, 22), width=1)
-
-
-def vignette(base: Image.Image):
-    if _np is not None:
-        x = _np.arange(W, dtype=_np.float64)[None, :]
-        y = _np.arange(H, dtype=_np.float64)[:, None]
-        dx = _np.abs(x - W / 2) / (W / 2)
-        dy = _np.abs(y - H / 2) / (H / 2)
-        a = _np.clip(118 * _np.clip(dx * dx + dy * dy - 0.55, 0, None), None, 130).astype(_np.uint8)
-        overlay = _np.zeros((H, W, 4), dtype=_np.uint8)
-        overlay[..., 3] = a
-        base.alpha_composite(Image.fromarray(overlay, "RGBA"))
-        return
-    overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
-    px = overlay.load()
-    for y in range(H):
-        for x in range(W):
-            dx = abs(x - W / 2) / (W / 2)
-            dy = abs(y - H / 2) / (H / 2)
-            px[x, y] = (0, 0, 0, min(130, int(118 * max(0, dx * dx + dy * dy - 0.55))))
-    base.alpha_composite(overlay)
+    gap = 20
+    cw = (w - 60 - gap * 2) // 3
+    cy, ch = y + 76, 142
+    for i, (kind, value, label, desc, ac) in enumerate(stats):
+        cx = x + 30 + i * (cw + gap)
+        glow(base, (cx, cy, cx + cw, cy + ch), 24, ac, blur=10, alpha=110, outline=4)
+        cb = vgradient((cw, ch), mix(NAVY, ac, 0.55), mix(NAVY, ac, 0.12), 240, 240)
+        base.alpha_composite(masked(cb, rounded_mask((cw, ch), 24)), (cx, cy))
+        overlay_round_rect(base, (cx, cy, cx + cw, cy + ch), 24, outline=(*ac, 220), width=2)
+        draw_stat_deco(base, kind, cx, cy, cw, ch - 18, ac, 40 + i)
+        ib = (cx + 20, cy + 30, cx + 98, cy + 108)
+        glow(base, ib, 22, ac, blur=10, alpha=140)
+        ig = vgradient((78, 78), mix(ac, (255, 255, 255), 0.25), mix(ac, NAVY, 0.3))
+        base.alpha_composite(masked(ig, rounded_mask((78, 78), 22)), (ib[0], ib[1]))
+        overlay_round_rect(base, ib, 22, outline=(255, 255, 255, 80), width=1)
+        draw_icon(d, kind, cx + 41, cy + 51, 36, (255, 255, 255, 250))
+        vf = fit_plain_font(d, "display_bold", value, 56, cw - 130 - 90)
+        d.text((cx + 118, cy + 14), value, font=vf, fill=(*mix(ac, (255, 255, 255), 0.3), 255))
+        d.text((cx + 120, cy + 78), label, font=f("sans_bold", 20), fill=(255, 255, 255, 250))
+        d.text((cx + 120, cy + 108), ellipsize(d, desc, 15, "regular", cw - 120 - 96), font=f("sans_regular", 15), fill=(205, 214, 240, 215))
 
 
 def render_banner(output: Path, title: str, tagline: str, panels, stats_title: str, stats_subtitle: str, stats, seed: int):
     base = background(seed)
     draw_header(base, title, tagline, seed)
     count = len(panels)
-    panel_w = (W - (MARGIN * 2) - GAP * (count - 1)) // count
-    panel_y = 278 if count == 2 else 266
-    panel_h = 438
-    for i, (panel_title, kind, accent, data) in enumerate(panels):
-        draw_panel(base, MARGIN + i * (panel_w + GAP), panel_y, panel_w, panel_h, panel_title, kind, accent, data)
+    panel_w = (W - MARGIN * 2 - GAP * (count - 1)) // count
+    for i, panel in enumerate(panels):
+        panel_title, kind, accent, data = panel[:4]
+        subtitle = panel[4] if len(panel) > 4 else ""
+        draw_panel(base, MARGIN + i * (panel_w + GAP), 246, panel_w, 470, panel_title, kind, accent, data, subtitle)
     draw_stats(base, stats_title, stats_subtitle, stats)
-    draw_footer(base)
-    vignette(base)
     output.parent.mkdir(parents=True, exist_ok=True)
     base.convert("RGB").save(output, quality=96)

@@ -44,6 +44,7 @@ Stream YouTube tracks (or your own audio/video files) straight into a group voic
 - 🔴 **Live streams** — plays YouTube live streams.
 - 🔍 **Inline search** — type `@YourBot song name` in any chat to search YouTube.
 - 🎯 **Live call title** — updates the group call title to the currently playing track.
+- 👋 **Voice-chat welcome** — greets listeners inside the voice chat when they join.
 - 👥 **Multi-chat** — serves many groups at once.
 - 🛡 **Permissions** — group-admins plus a per-group "VC admin" system.
 - 📡 **Broadcast** — owner-only message broadcast to all users/groups.
@@ -158,6 +159,8 @@ All configuration lives in `.env` (see [`.env.example`](.env.example)).
 | `MAX_CONCURRENT_CHATS` | — | `50` | Max simultaneous voice chats |
 | `MAX_PLAYLIST_TRACKS` | — | `50` | Max tracks loaded from a playlist |
 | `MAX_TRACK_DURATION` | — | `7200` | Max track length (seconds) |
+| `AUTOPLAY_BATCH_SIZE` | — | `5` | Related tracks queued when autoplay is allowed |
+| `AUTOPLAY_PROMPT_TIMEOUT` | — | `90` | Seconds to wait for an answer to the autoplay prompt |
 
 > **Note:** `BOT_OWNER_ID` (used for `/restart`, `/broadcast`, and `/logs`) is **hardcoded** in `telecast/core/config.py`. Change it to your own Telegram user ID before deploying.
 
@@ -232,12 +235,59 @@ Open with `/settings` (admin). Available toggles:
 - **Mode** — audio or video
 - **Quality** — 360p / 480p / 720p / 1080p
 - **Audio quality** — low / medium / high
-- **Autoplay**
+- **Autoplay** — when the queue drains, ask whether to keep playing related songs
 - **Title update** — update the live call title to the current track
 - **Admin-only mode** — restrict playback to admins/VC-admins
 - **Shuffle**
 - **Mention requester**
 - **Playlist permission** — who may load playlists (everyone / admins)
+- **Autoplay permission** — who may answer the autoplay prompt (everyone / admins)
+- **VC Welcome** — greet listeners when they join the voice chat
+
+### Autoplay
+
+With **Autoplay** on, the bot never starts related songs on its own — it asks first.
+When the last queued track ends, it posts the track it just played with two buttons:
+
+| Button | Result |
+| --- | --- |
+| **Play Related Songs** | Queues `AUTOPLAY_BATCH_SIZE` related tracks (from YouTube's own related list) and keeps playing |
+| **No Thanks** | Stops playback and leaves the voice chat |
+
+If nobody answers within `AUTOPLAY_PROMPT_TIMEOUT` seconds, playback stops. When the
+related batch drains, the bot asks again — so it behaves like a radio while still
+giving the group a decision point. Related songs are only offered when the last track
+was a YouTube one; tracks longer than `MAX_TRACK_DURATION` are skipped.
+
+**Autoplay permission** decides who may press those buttons:
+
+- **Everyone** (default) — any member of the group can answer
+- **Admins** — only group admins and VC admins can answer; others get an alert
+
+---
+
+<a id="vc-welcome"></a>
+
+## 👋 Voice-chat welcome
+
+When someone joins the voice chat while music is playing, the assistant posts a short
+greeting **inside the call** — the text bubble that appears over the voice chat:
+
+> 👋 Welcome, Alex! Enjoy the music 🎶
+
+Each listener is greeted **once per call**. If they leave and rejoin the same voice chat,
+nothing is sent; when the call ends and a new one starts, they are greeted again. The
+assistant never greets itself.
+
+Turn it off per group with **👋 VC Welcome** in `/settings` (on by default).
+
+Two things to know:
+
+- Greetings use Telegram's in-call messages, which only exist while the assistant is in
+  the call — so they appear during playback, not in the group's message history.
+- The voice chat must have **messages enabled** (an admin setting in Telegram). If they
+  are off, Telegram rejects the message; the bot logs why and posts nothing to the group
+  instead of falling back to a normal chat message.
 
 ---
 

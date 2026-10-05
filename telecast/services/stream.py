@@ -4,7 +4,8 @@ import asyncio
 import time
 from typing import Dict, Optional, Callable, Set
 from pytgcalls import PyTgCalls
-from pytgcalls.types import MediaStream, AudioQuality
+from pytgcalls.types import MediaStream, AudioQuality, VideoQuality
+from pytgcalls.types.raw import VideoParameters
 from telecast.core.logging import logger
 from telecast.services.effects import build_ffmpeg_parameters
 from telecast.core.errors import StreamOperationTimeout, FloodWaitError, TelegramServerError
@@ -15,6 +16,40 @@ AUDIO_QUALITY_MAP = {
     "medium": AudioQuality.MEDIUM,
     "low": AudioQuality.LOW,
 }
+
+# These must stay in step with ``downloader._get_format_selector`` and the
+# quality buttons in ``keyboards.quality_menu`` — the download resolution and
+# the stream resolution have to agree or ffmpeg rescales every frame.
+VIDEO_QUALITY_MAP = {
+    "1080p": VideoQuality.FHD_1080p,
+    "720p": VideoQuality.HD_720p,
+    "480p": VideoQuality.SD_480p,
+    "360p": VideoQuality.SD_360p,
+}
+
+# The 1080p and above presets are defined at 60fps. A music video gains nothing
+# from that and it doubles the raw frame throughput through ffmpeg, so cap it.
+MAX_VIDEO_FPS = 30
+
+
+def resolve_video_parameters(quality: str) -> VideoParameters:
+    """Map a chat's ``quality`` setting onto the stream's video parameters.
+
+    ``adjust_by_height=False`` mirrors what ``MediaStream`` does when it is
+    handed a ``VideoQuality`` directly. With the native proportion logic that
+    means the source aspect ratio is preserved and the stream is never
+    upscaled: a 1920x1080 download stays 1920x1080 at the 1080p setting, and a
+    portrait source keeps its full height even though that exceeds the preset's
+    height. The setting therefore acts as a width cap, not a hard bounding box.
+    """
+    preset = VIDEO_QUALITY_MAP.get(
+        (quality or "720p").lower(), VideoQuality.HD_720p
+    )
+    width, height, _ = preset.value
+    return VideoParameters(
+        width, height, frame_rate=MAX_VIDEO_FPS, adjust_by_height=False
+    )
+
 
 JOIN_TIMEOUT = 90
 LEAVE_TIMEOUT = 45
@@ -33,10 +68,12 @@ class TGCallsManager:
         self._monitor_tasks: Dict[int, asyncio.Task] = {}
         self._end_locks: Dict[int, asyncio.Lock] = {}
         self._vc_members: Dict[int, Set[int]] = {}
+        self._vc_join_seen: Dict[int, Set[int]] = {}
         self._aux_tasks: Set[asyncio.Task] = set()
         self._empty_vc_tasks: Dict[int, asyncio.Task] = {}
         self._assistant_id: Optional[int] = None
         self.on_vc_empty_callback: Optional[Callable] = None
+        self.on_vc_join_callback: Optional[Callable] = None
 
     async def initialize(self):
         if not self.call:
@@ -84,6 +121,7 @@ class TGCallsManager:
                         assistant_id = await self._get_assistant_id()
                         if user_id != assistant_id:
                             self._cancel_empty_vc_timer(chat_id)
+                            self._notify_vc_join(chat_id, user_id)
                     elif action in (
                         GroupCallParticipant.Action.LEFT,
                         GroupCallParticipant.Action.KICKED,
@@ -140,6 +178,24 @@ class TGCallsManager:
 
     def clear_vc_cache(self, chat_id: int):
         self._vc_members.pop(chat_id, None)
+        self._vc_join_seen.pop(chat_id, None)
+
+    def _notify_vc_join(self, chat_id: int, user_id: int):
+        if not self.on_vc_join_callback or chat_id not in self.streams:
+            return
+        seen = self._vc_join_seen.setdefault(chat_id, set())
+        if user_id in seen:
+            return
+        seen.add(user_id)
+        task = asyncio.create_task(self._run_vc_join_callback(chat_id, user_id))
+        self._aux_tasks.add(task)
+        task.add_done_callback(self._aux_tasks.discard)
+
+    async def _run_vc_join_callback(self, chat_id: int, user_id: int):
+        try:
+            await self.on_vc_join_callback(chat_id, user_id)
+        except Exception as e:
+            logger.error(f"Error in on_vc_join_callback for {chat_id}: {e}")
 
     async def _get_assistant_id(self) -> Optional[int]:
         if self._assistant_id is None:
@@ -160,6 +216,9 @@ class TGCallsManager:
         await self._get_assistant_id()
         if self._count_real_listeners(chat_id) > 0:
             return
+        # The cache said "empty" — confirm against Telegram before arming the timer.
+        if await self._refresh_has_listeners(chat_id):
+            return
         if chat_id in self._empty_vc_tasks and not self._empty_vc_tasks[chat_id].done():
             return
         logger.info(
@@ -167,6 +226,21 @@ class TGCallsManager:
             f"unless someone rejoins"
         )
         self._empty_vc_tasks[chat_id] = asyncio.create_task(self._empty_vc_timer(chat_id))
+
+    async def _refresh_has_listeners(self, chat_id: int) -> bool:
+        """Re-sync the member cache from Telegram; True if a non-assistant is present.
+
+        The event-driven cache misses members who were already in the call before
+        the assistant joined (or whose JOINED update was dropped), so one person
+        leaving made the cache look empty while another was still listening.
+        If the query fails we assume someone is present (never leave on doubt).
+        """
+        members = await self.get_current_members(chat_id)
+        if members is None:
+            return True
+        self._vc_members[chat_id] = members
+        listeners = [m for m in members if m != self._assistant_id]
+        return bool(listeners)
 
     def _cancel_empty_vc_timer(self, chat_id: int):
         task = self._empty_vc_tasks.pop(chat_id, None)
@@ -179,7 +253,7 @@ class TGCallsManager:
             await asyncio.sleep(EMPTY_VC_GRACE)
             if chat_id not in self.streams:
                 return
-            if self._count_real_listeners(chat_id) > 0:
+            if self._count_real_listeners(chat_id) > 0 or await self._refresh_has_listeners(chat_id):
                 logger.info(f"Empty-VC timer fired for {chat_id} but a listener is present — staying")
                 return
             logger.info(f"Empty-VC grace elapsed for {chat_id} — stopping and leaving")
@@ -350,6 +424,9 @@ class TGCallsManager:
     def set_vc_empty_callback(self, callback: Callable):
         self.on_vc_empty_callback = callback
 
+    def set_vc_join_callback(self, callback: Callable):
+        self.on_vc_join_callback = callback
+
     async def get_call(self) -> PyTgCalls:
         if not self.call:
             await self.initialize()
@@ -367,7 +444,7 @@ class TGCallsManager:
                 f"{op_name} timed out after {timeout}s in {chat_id}"
             ) from None
 
-    async def play_stream(self, chat_id: int, path: str, video: bool = False, quality: str = "high", duration: int = 0, seek_position: int = None, audio_quality: str = "high", audio_effect: str = "none", speed=None):
+    async def play_stream(self, chat_id: int, path: str, video: bool = False, quality: str = "720p", duration: int = 0, seek_position: int = None, audio_quality: str = "high", audio_effect: str = "none", speed=None):
         call = await self.get_call()
 
         try:
@@ -379,7 +456,15 @@ class TGCallsManager:
                 common["ffmpeg_parameters"] = ffmpeg_params
 
             if video:
-                stream = MediaStream(path, **common)
+                video_params = resolve_video_parameters(quality)
+                stream = MediaStream(
+                    path, video_parameters=video_params, **common
+                )
+                logger.info(
+                    f"Video stream for {chat_id}: requested '{quality}' -> "
+                    f"{video_params.width}x{video_params.height}"
+                    f"@{video_params.frame_rate}"
+                )
             else:
                 stream = MediaStream(path, video_flags=MediaStream.Flags.IGNORE, **common)
 

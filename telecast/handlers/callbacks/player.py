@@ -4,7 +4,40 @@ from telecast.db import db
 from telecast.services.queue import queue_manager
 from telecast.ui.keyboards import keyboards
 from telecast.ui.messages import messages
+from telecast.utils.rich import show_settings
+from telecast.utils.permissions import permission_checker
 from telecast.core.logging import logger
+
+
+async def handle_autoplay(client, callback_query, player):
+    data = callback_query.data
+    chat_id = callback_query.message.chat.id
+    user = callback_query.from_user
+    user_id = user.id if user else 0
+
+    if not player.has_pending_autoplay(chat_id):
+        await callback_query.answer("⌛️ This autoplay request has expired.", show_alert=True)
+        return
+
+    settings = await db.get_chat_settings(chat_id)
+    if settings.get('autoplay_permission', 'everyone') == 'admin':
+        is_admin = await permission_checker.is_admin(client, chat_id, user_id)
+        is_vc_admin = await db.is_vc_admin(chat_id, user_id)
+        if not (is_admin or is_vc_admin):
+            await callback_query.answer("❌ Only admins can decide on autoplay.", show_alert=True)
+            return
+
+    if data.startswith("autoplay_no_"):
+        await callback_query.answer("⏹️ Autoplay skipped")
+        await player.decline_autoplay(chat_id)
+        return
+
+    await callback_query.answer("🎧 Finding related songs...")
+    await player.start_autoplay(
+        chat_id,
+        requested_by=user.first_name if user else "Unknown",
+        requested_by_id=user_id
+    )
 
 
 async def handle(client, callback_query, player, user_client, settings):
@@ -18,8 +51,15 @@ async def handle(client, callback_query, player, user_client, settings):
 
         current = await player.get_current_track(chat_id)
         if current:
+            queue = await queue_manager.get_queue(chat_id)
             loop_mode = settings.get('loop_mode', 'off')
-            await message.edit_reply_markup(keyboards.player_controls(chat_id, is_paused=True, loop_mode=loop_mode))
+            current_time = await player.get_current_time(chat_id)
+            total_time = int(current.get('duration', 0))
+            await message.edit_reply_markup(keyboards.player_controls(
+                chat_id, is_paused=True, current_time=current_time, total_time=total_time,
+                is_live=current.get('is_live', False), loop_mode=loop_mode,
+                queue_length=len(queue), autoplay=settings.get('autoplay', False)
+            ))
 
     elif data.startswith("resume_"):
         await player.resume(chat_id)
@@ -27,8 +67,15 @@ async def handle(client, callback_query, player, user_client, settings):
 
         current = await player.get_current_track(chat_id)
         if current:
+            queue = await queue_manager.get_queue(chat_id)
             loop_mode = settings.get('loop_mode', 'off')
-            await message.edit_reply_markup(keyboards.player_controls(chat_id, is_paused=False, loop_mode=loop_mode))
+            current_time = await player.get_current_time(chat_id)
+            total_time = int(current.get('duration', 0))
+            await message.edit_reply_markup(keyboards.player_controls(
+                chat_id, is_paused=False, current_time=current_time, total_time=total_time,
+                is_live=current.get('is_live', False), loop_mode=loop_mode,
+                queue_length=len(queue), autoplay=settings.get('autoplay', False)
+            ))
 
     elif data.startswith("skip_"):
         try:
@@ -81,10 +128,7 @@ async def handle(client, callback_query, player, user_client, settings):
         await callback_query.answer(f"Loop: {mode}")
 
         settings = await db.get_chat_settings(chat_id)
-        await message.edit_text(
-            messages.settings_info(settings),
-            reply_markup=keyboards.settings_menu(chat_id, settings)
-        )
+        await show_settings(message, keyboards.settings_menu(chat_id, settings), messages.settings_info(settings))
 
     elif data.startswith("back_"):
         current = await player.get_current_track(chat_id)
@@ -94,9 +138,15 @@ async def handle(client, callback_query, player, user_client, settings):
             playlist_unfetched = (playlist_state['total'] - playlist_state['fetched']) if playlist_state else 0
             settings = await db.get_chat_settings(chat_id)
             loop_mode = settings.get('loop_mode', 'off')
+            current_time = await player.get_current_time(chat_id)
+            total_time = int(current.get('duration', 0))
             await message.edit_text(
-                messages.now_playing(current, current.get('requested_by', 'Unknown'), 0, queue, playlist_unfetched),
-                reply_markup=keyboards.player_controls(chat_id, loop_mode=loop_mode)
+                messages.now_playing(current, current.get('requested_by', 'Unknown'), current_time, queue, playlist_unfetched),
+                reply_markup=keyboards.player_controls(
+                    chat_id, current_time=current_time, total_time=total_time,
+                    is_live=current.get('is_live', False), loop_mode=loop_mode,
+                    queue_length=len(queue), autoplay=settings.get('autoplay', False)
+                )
             )
         else:
             await message.edit_text("No track playing")
@@ -129,7 +179,7 @@ async def handle(client, callback_query, player, user_client, settings):
     elif data.startswith("volume_"):
         is_muted = player.tgcalls.is_muted(chat_id)
         await message.edit_text(
-            "🔊 **Volume Control**\n\nSelect volume level:",
+            "🔊 **Sound Control**\n\nSelect volume level or an effect:",
             reply_markup=keyboards.volume_menu(chat_id, is_muted=is_muted)
         )
 
@@ -140,7 +190,7 @@ async def handle(client, callback_query, player, user_client, settings):
 
             is_muted = player.tgcalls.is_muted(chat_id)
             await message.edit_text(
-                "🔊 **Volume Control**\n\nSelect volume level:",
+                "🔊 **Sound Control**\n\nSelect volume level or an effect:",
                 reply_markup=keyboards.volume_menu(chat_id, is_muted=is_muted)
             )
         except Exception as e:
@@ -153,7 +203,7 @@ async def handle(client, callback_query, player, user_client, settings):
 
             is_muted = player.tgcalls.is_muted(chat_id)
             await message.edit_text(
-                "🔊 **Volume Control**\n\nSelect volume level:",
+                "🔊 **Sound Control**\n\nSelect volume level or an effect:",
                 reply_markup=keyboards.volume_menu(chat_id, is_muted=is_muted)
             )
         except Exception as e:
@@ -175,9 +225,15 @@ async def handle(client, callback_query, player, user_client, settings):
                 playlist_unfetched = (playlist_state['total'] - playlist_state['fetched']) if playlist_state else 0
                 settings = await db.get_chat_settings(chat_id)
                 loop_mode = settings.get('loop_mode', 'off')
+                current_time = await player.get_current_time(chat_id)
+                total_time = int(current.get('duration', 0))
                 await message.edit_text(
-                    messages.now_playing(current, current.get('requested_by', 'Unknown'), 0, queue, playlist_unfetched),
-                    reply_markup=keyboards.player_controls(chat_id, loop_mode=loop_mode)
+                    messages.now_playing(current, current.get('requested_by', 'Unknown'), current_time, queue, playlist_unfetched),
+                    reply_markup=keyboards.player_controls(
+                        chat_id, current_time=current_time, total_time=total_time,
+                        is_live=current.get('is_live', False), loop_mode=loop_mode,
+                        queue_length=len(queue), autoplay=settings.get('autoplay', False)
+                    )
                 )
         except NotImplementedError as e:
             await callback_query.answer(f"⚠️ {str(e)}", show_alert=True)

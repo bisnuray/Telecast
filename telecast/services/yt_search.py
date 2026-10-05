@@ -12,6 +12,7 @@ from telecast.core.logging import logger
 _API_KEY = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
 _CLIENT_VERSION = "2.20250101.01.00"
 _ENDPOINT = f"https://www.youtube.com/youtubei/v1/search?key={_API_KEY}"
+_ENDPOINT_NEXT = f"https://www.youtube.com/youtubei/v1/next?key={_API_KEY}"
 
 _USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -61,6 +62,16 @@ def _text(node: Any) -> str:
     return ""
 
 
+def _dig(node: Any, *path: str, default: Any = None) -> Any:
+    for key in path:
+        if not isinstance(node, dict):
+            return default
+        node = node.get(key)
+        if node is None:
+            return default
+    return node
+
+
 def _collect(node: Any, key: str, out: List[Any]) -> None:
     if isinstance(node, dict):
         for k, v in node.items():
@@ -107,6 +118,55 @@ def _to_track(video: Dict) -> Optional[Dict]:
         ) or "Unknown",
         "is_live": _is_live(video),
         "view_count": _parse_views(_text(video.get("viewCountText"))),
+    }
+
+
+def _lockup_duration(lockup: Dict) -> int:
+    overlays = _dig(lockup, "contentImage", "thumbnailViewModel", "overlays", default=[])
+    for overlay in overlays:
+        badges = ((overlay or {}).get("thumbnailBottomOverlayViewModel") or {}).get("badges") or []
+        for badge in badges:
+            text = ((badge or {}).get("thumbnailBadgeViewModel") or {}).get("text", "")
+            duration = _parse_duration(text)
+            if duration:
+                return duration
+    return 0
+
+
+def _lockup_uploader(lockup: Dict) -> str:
+    rows = _dig(
+        lockup, "metadata", "lockupMetadataViewModel", "metadata",
+        "contentMetadataViewModel", "metadataRows", default=[],
+    )
+    for row in rows:
+        for part in (row or {}).get("metadataParts") or []:
+            text = ((part or {}).get("text") or {}).get("content", "")
+            if text:
+                return text
+    return "Unknown"
+
+
+def _lockup_to_track(lockup: Dict) -> Optional[Dict]:
+    video_id = lockup.get("contentId")
+    if not video_id or lockup.get("contentType") != "LOCKUP_CONTENT_TYPE_VIDEO":
+        return None
+
+    duration = _lockup_duration(lockup)
+    if duration <= 0:
+        return None
+
+    sources = _dig(lockup, "contentImage", "thumbnailViewModel", "image", "sources", default=[])
+    thumbnail = sources[-1].get("url", "") if sources else ""
+
+    return {
+        "id": video_id,
+        "title": _dig(lockup, "metadata", "lockupMetadataViewModel", "title", "content") or "Unknown",
+        "url": f"https://www.youtube.com/watch?v={video_id}",
+        "duration": duration,
+        "thumbnail": thumbnail,
+        "uploader": _lockup_uploader(lockup),
+        "is_live": False,
+        "view_count": 0,
     }
 
 
@@ -181,6 +241,72 @@ class YouTubeSearch:
                 f"InnerTube search {query!r} -> {len(tracks)} result(s) "
                 f"in {time.monotonic() - started:.2f}s"
             )
+        return tracks
+
+    async def related(self, video_id: str, limit: int = 25) -> List[Dict]:
+        video_id = (video_id or "").strip()
+        if not video_id:
+            return []
+
+        payload = {
+            "context": {
+                "client": {
+                    "clientName": "WEB",
+                    "clientVersion": _CLIENT_VERSION,
+                    "hl": "en",
+                    "gl": "US",
+                }
+            },
+            "videoId": video_id,
+        }
+
+        started = time.monotonic()
+        try:
+            session = await self._get_session()
+            async with session.post(_ENDPOINT_NEXT, json=payload) as resp:
+                if resp.status != 200:
+                    logger.warning(
+                        f"InnerTube next returned HTTP {resp.status} for {video_id}"
+                    )
+                    return []
+                data = await resp.json(content_type=None)
+        except asyncio.TimeoutError:
+            logger.warning(f"InnerTube next timed out for {video_id}")
+            return []
+        except Exception as e:
+            logger.warning(f"InnerTube next failed for {video_id}: {e}")
+            return []
+
+        results = _dig(
+            data,
+            "contents", "twoColumnWatchNextResults",
+            "secondaryResults", "secondaryResults", "results",
+            default=[],
+        )
+
+        tracks: List[Dict] = []
+        seen = {video_id}
+        for entry in results:
+            if len(tracks) >= limit:
+                break
+            if not isinstance(entry, dict):
+                continue
+
+            renderer = entry.get("lockupViewModel") or entry.get("compactVideoRenderer")
+            if not isinstance(renderer, dict):
+                continue
+
+            track = _lockup_to_track(renderer) if "contentId" in renderer else _to_track(renderer)
+            if not track or track["id"] in seen:
+                continue
+
+            seen.add(track["id"])
+            tracks.append(track)
+
+        logger.info(
+            f"InnerTube related {video_id} -> {len(tracks)} result(s) "
+            f"in {time.monotonic() - started:.2f}s"
+        )
         return tracks
 
     async def search_one(self, query: str) -> Optional[Dict]:

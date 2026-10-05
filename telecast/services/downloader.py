@@ -15,44 +15,13 @@ _executor = ThreadPoolExecutor(max_workers=4)
 
 AUDIO_EXTS = ('.opus', '.webm', '.m4a', '.mp3', '.ogg', '.mp4', '.mkv')
 
-AUDIO_FORMAT = 'bestaudio[ext=webm]/bestaudio[ext=opus]/bestaudio/best'
-
 _metadata_cache: Dict[str, tuple] = {}
 _CACHE_TTL = 300
 _CACHE_MAX = 64
 
-_info_cache: Dict[str, tuple] = {}
-_INFO_TTL = 3600
-_INFO_MAX = 32
-_INFO_DROP = ('automatic_captions', 'subtitles', 'heatmap', 'chapters', 'thumbnails')
-
 
 def _is_cache_valid(entry: tuple) -> bool:
     return (time.monotonic() - entry[1]) < _CACHE_TTL
-
-
-def _cache_info(video_id: Optional[str], info: Optional[Dict]) -> None:
-    if not video_id or not isinstance(info, dict) or not info.get('formats'):
-        return
-    now = time.monotonic()
-    for key in [k for k, v in _info_cache.items() if (now - v[1]) >= _INFO_TTL]:
-        _info_cache.pop(key, None)
-    if video_id not in _info_cache and len(_info_cache) >= _INFO_MAX:
-        oldest = min(_info_cache, key=lambda k: _info_cache[k][1])
-        _info_cache.pop(oldest, None)
-    _info_cache[video_id] = ({k: v for k, v in info.items() if k not in _INFO_DROP}, now)
-
-
-def _get_cached_info(video_id: Optional[str]) -> Optional[Dict]:
-    if not video_id:
-        return None
-    entry = _info_cache.get(video_id)
-    if not entry:
-        return None
-    if (time.monotonic() - entry[1]) >= _INFO_TTL:
-        _info_cache.pop(video_id, None)
-        return None
-    return entry[0]
 
 
 def _slim_info(info: Optional[Dict]) -> Optional[Dict]:
@@ -74,7 +43,6 @@ def _cache_metadata(url: str, metadata: Dict) -> None:
 
 class MediaDownloader:
     def __init__(self):
-        self._prepare_tasks: Dict[str, asyncio.Task] = {}
         self.cookies_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'cookies', 'yt.txt')
 
         self._base_opts = {
@@ -116,6 +84,14 @@ class MediaDownloader:
         return match.group(1) if match else None
 
     @staticmethod
+    def track_video_id(track: Optional[Dict]) -> Optional[str]:
+        if not track:
+            return None
+        raw = track.get('_raw_info')
+        video_id = raw.get('id') if isinstance(raw, dict) else None
+        return video_id or MediaDownloader._extract_video_id(track.get('url') or '')
+
+    @staticmethod
     def _safe_video_id(video_id: str) -> str:
         return video_id.replace("'", "").replace('"', "").replace('/', '_').replace('\\', '_')
 
@@ -129,51 +105,6 @@ class MediaDownloader:
                 return os.path.abspath(file_path)
         return None
 
-    async def prepare(self, url: str, info: Optional[Dict] = None) -> Optional[Dict]:
-        video_id = (info or {}).get('id') or self._extract_video_id(url)
-        if not video_id:
-            return None
-
-        cached = _get_cached_info(video_id)
-        if cached is not None:
-            return cached
-
-        existing = self._prepare_tasks.get(video_id)
-        if existing and not existing.done():
-            return await asyncio.shield(existing)
-
-        task = asyncio.ensure_future(self._extract_full(url, video_id))
-        self._prepare_tasks[video_id] = task
-
-        def _forget(done, vid=video_id):
-            if self._prepare_tasks.get(vid) is done:
-                self._prepare_tasks.pop(vid, None)
-
-        task.add_done_callback(_forget)
-        return await asyncio.shield(task)
-
-    async def _extract_full(self, url: str, video_id: str) -> Optional[Dict]:
-        opts = self._make_opts({
-            'noplaylist': True,
-            'skip_download': True,
-            'format': AUDIO_FORMAT,
-        })
-
-        try:
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = await self._run_sync(lambda: ydl.extract_info(url, download=False))
-        except Exception as e:
-            logger.warning(f"Prepare failed for {url}: {e}")
-            return None
-
-        if isinstance(info, dict) and info.get('entries'):
-            info = info['entries'][0] if info['entries'] else None
-        if not isinstance(info, dict):
-            return None
-
-        _cache_info(info.get('id') or video_id, info)
-        return _get_cached_info(video_id)
-
     async def get_metadata(self, url: str) -> Optional[Dict]:
         cached = _metadata_cache.get(url)
         if cached and _is_cache_valid(cached):
@@ -184,21 +115,14 @@ class MediaDownloader:
             'extract_flat': False,
             'noplaylist': True,
             'skip_download': True,
-            'format': AUDIO_FORMAT,
         })
 
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = await self._run_sync(lambda: ydl.extract_info(url, download=False))
         except Exception as e:
-            logger.warning(f"Metadata extraction with the audio format failed for {url} ({e}); retrying without it")
-            opts.pop('format', None)
-            try:
-                with yt_dlp.YoutubeDL(opts) as ydl:
-                    info = await self._run_sync(lambda: ydl.extract_info(url, download=False))
-            except Exception as retry_error:
-                logger.error(f"Failed to get metadata for {url}: {retry_error}")
-                return None
+            logger.error(f"Failed to get metadata for {url}: {e}")
+            return None
 
         if not info:
             return None
@@ -209,8 +133,6 @@ class MediaDownloader:
             info = info['entries'][0]
             if not info:
                 return None
-
-        _cache_info(info.get('id'), info)
 
         title = info.get('title', 'Unknown')
         duration = int(info.get('duration', 0) or 0)
@@ -238,29 +160,14 @@ class MediaDownloader:
                 logger.info(f"Cache hit - audio file exists: {cached}")
                 return cached
 
-            prepared = _get_cached_info(video_id)
-            if prepared is None:
-                prepared = await self.prepare(url, info)
-
             opts = self._make_opts({
-                'format': AUDIO_FORMAT,
+                'format': 'bestaudio[ext=webm]/bestaudio[ext=opus]/bestaudio/best',
                 'outtmpl': f'{Config.DOWNLOADS_DIR}/%(id)s.%(ext)s',
                 'noplaylist': True,
             })
 
-            def run():
-                with yt_dlp.YoutubeDL(opts) as ydl:
-                    if prepared is not None:
-                        try:
-                            return ydl.process_ie_result(dict(prepared), download=True)
-                        except Exception as e:
-                            logger.warning(f"Reuse of prepared info failed for {url} ({e}); re-extracting")
-                            if video_id:
-                                _info_cache.pop(video_id, None)
-                    with yt_dlp.YoutubeDL(opts) as fallback:
-                        return fallback.extract_info(url, download=True)
-
-            dl_info = await self._run_sync(run)
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                dl_info = await self._run_sync(lambda: ydl.extract_info(url, download=True))
 
             if dl_info:
                 if isinstance(dl_info, list):
@@ -407,7 +314,6 @@ class MediaDownloader:
         metadata = await youtube_search.search_one(query)
         if metadata:
             _cache_metadata(metadata['url'], metadata)
-            asyncio.ensure_future(self.prepare(metadata['url']))
             return metadata
 
         logger.warning(f"InnerTube search returned nothing for {query!r}; falling back to yt-dlp")
@@ -499,5 +405,44 @@ class MediaDownloader:
         except Exception as e:
             logger.error(f"Failed to search YouTube for '{query}': {e}")
             return []
+
+    async def get_related_tracks(self, track: Optional[Dict], limit: int = 5) -> List[Dict]:
+        video_id = self.track_video_id(track)
+        if not video_id:
+            return []
+
+        results = await youtube_search.related(video_id, limit=limit)
+        if not results:
+            logger.warning(f"InnerTube related returned nothing for {video_id}; falling back to yt-dlp")
+            return await self._related_ytdlp(video_id, limit)
+
+        tracks = []
+        for entry in results[:limit]:
+            if self._too_long(entry.get('duration', 0)):
+                logger.info(f"Skipping related track longer than limit: {entry.get('title')}")
+                continue
+            tracks.append({
+                'type': 'youtube',
+                'url': entry.get('url') or f"https://www.youtube.com/watch?v={entry.get('id')}",
+                'title': entry.get('title', 'Unknown'),
+                'duration': entry.get('duration', 0),
+                'uploader': entry.get('uploader', 'Unknown'),
+                'thumbnail': entry.get('thumbnail', ''),
+                'is_live': False,
+                '_raw_info': {'id': entry.get('id')},
+            })
+        return tracks
+
+    async def _related_ytdlp(self, video_id: str, limit: int) -> List[Dict]:
+        mix_url = f"https://www.youtube.com/watch?v={video_id}&list=RD{video_id}"
+        batch = await self.get_playlist_batch(mix_url, 0, limit + 1)
+        return [
+            track for track in batch
+            if self.track_video_id(track) != video_id and not self._too_long(track.get('duration', 0))
+        ][:limit]
+
+    @staticmethod
+    def _too_long(duration) -> bool:
+        return int(duration or 0) > Config.MAX_TRACK_DURATION
 
 downloader = MediaDownloader()

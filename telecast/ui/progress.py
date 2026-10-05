@@ -24,8 +24,8 @@ class ProgressUpdater:
             req_mention = req_name
 
         message = f"![🎵](tg://emoji?id=5334665104677941170) **Music Playlist:**\n\n"
-        message += f"**1. ![🎸](tg://emoji?id=5465665777619204788) {title}**\n"
-        message += f"![🏆](tg://emoji?id=5409008750893734809) **Requested by:** {req_mention}\n\n"
+        message += f"**1. ![🎸](tg://emoji?id=5222472119295684375) {title}**\n"
+        message += f"![🏆](tg://emoji?id=5944970130554359187) **Requested by:** {req_mention}\n\n"
 
         if queue and len(queue) > 1:
             for i, next_track in enumerate(queue[1:4], start=2):
@@ -38,8 +38,8 @@ class ProgressUpdater:
                     next_mention = f"[{next_name}](tg://user?id={next_id})"
                 else:
                     next_mention = next_name
-                message += f"**{i}. ![🎸](tg://emoji?id=5465665777619204788) {next_title}**\n"
-                message += f"![🏆](tg://emoji?id=5409008750893734809) **Requested by:** {next_mention}\n\n"
+                message += f"**{i}. ![🎸](tg://emoji?id=5222472119295684375) {next_title}**\n"
+                message += f"![🏆](tg://emoji?id=5944970130554359187) **Requested by:** {next_mention}\n\n"
 
             shown = min(len(queue), 4)
             remaining_in_queue = len(queue) - shown
@@ -55,7 +55,7 @@ class ProgressUpdater:
 
             while True:
                 try:
-                    await asyncio.sleep(20)
+                    await asyncio.sleep(30)
 
                     if self.current_message_ids.get(chat_id) != message_id:
                         logger.info(f"Progress updater for message {message_id} superseded in {chat_id}, stopping")
@@ -96,7 +96,9 @@ class ProgressUpdater:
                         current_position,
                         duration,
                         is_live,
-                        loop_mode
+                        loop_mode,
+                        len(queue),
+                        settings.get('autoplay', False)
                     )
 
                     try:

@@ -2,46 +2,154 @@
 
 import asyncio
 from typing import Optional, Tuple
-from pyrogram import Client
+from pyrogram import Client, types
+from pyrogram.enums import ChatMemberStatus
 from pyrogram.errors import (
     UserAlreadyParticipant, InviteHashExpired, UsersTooMuch,
-    FloodWait, ChatAdminRequired, ChannelPrivate, UserBannedInChannel
+    FloodWait, ChatAdminRequired, UserBannedInChannel
 )
 from telecast.core.logging import logger
+
+Result = Tuple[bool, Optional[str]]
+
+BAN_KEYWORDS = ('banned', 'ban', 'user_banned', 'kicked', 'channel_private', 'username not found')
+PENDING_KEYWORDS = ('invite_request_sent', 'request_sent', 'user_not_participant', 'join request',
+                    "not a member of this chat")
+
+BANNED_TITLE = "Assistant Account Banned"
+PENDING_TITLE = "Join Request Pending"
+
+
+class JoinNotice(str):
+    """Plain-text (markdown) notice that can also carry a rich message version of itself."""
+
+    rich_message: Optional[types.InputRichMessage] = None
+    reply_markup: Optional[types.InlineKeyboardMarkup] = None
+
+    def __new__(cls, text: str, rich_message: Optional[types.InputRichMessage] = None,
+                reply_markup: Optional[types.InlineKeyboardMarkup] = None):
+        obj = super().__new__(cls, text)
+        obj.rich_message = rich_message
+        obj.reply_markup = reply_markup
+        return obj
+
 
 class AutoJoinHandler:
 
     @staticmethod
-    async def ensure_user_in_chat(bot_client: Client, user_client: Client, chat_id: int) -> Tuple[bool, Optional[str]]:
+    def is_blocking_error(join_error: Optional[str]) -> bool:
+        """True when retrying with the next queued track cannot help until a human acts."""
+        if not join_error:
+            return False
+        return BANNED_TITLE in join_error or PENDING_TITLE in join_error or "banned" in join_error.lower()
+
+    @staticmethod
+    def _is_pending_error(error: Exception) -> bool:
+        text = str(error).lower()
+        return any(keyword in text for keyword in PENDING_KEYWORDS)
+
+    @staticmethod
+    def _is_ban_error(error: Exception) -> bool:
+        text = str(error).lower()
+        return any(keyword in text for keyword in BAN_KEYWORDS)
+
+    @staticmethod
+    async def _assistant_identity(user_client: Client):
+        me = getattr(user_client, 'me', None)
+        if not me:
+            me = await user_client.get_me()
+        return me
+
+    @staticmethod
+    async def _assistant_label(user_client: Client) -> str:
         try:
+            me = await AutoJoinHandler._assistant_identity(user_client)
+            return f"@{me.username}" if me.username else (me.first_name or str(me.id))
+        except Exception:
+            return "the assistant account"
+
+    @staticmethod
+    async def _banned_message(user_client: Client) -> str:
+        label = await AutoJoinHandler._assistant_label(user_client)
+        return (
+            f"❌ **{BANNED_TITLE}**\n\n"
+            f"Assistant account ({label}) is currently banned in this group.\n\n"
+            f"Please unban {label} manually and then try again."
+        )
+
+    @staticmethod
+    async def _pending_message(user_client: Client, chat_id: int) -> JoinNotice:
+        label = await AutoJoinHandler._assistant_label(user_client)
+
+        def who(bold: bool):
+            # Telegram turns "@username" in rich text into a mention by itself; explicit mention objects are rejected.
+            return types.RichTextBold(label) if bold else label
+
+        def step(*parts):
+            return types.InputRichBlockListItem(blocks=[types.InputRichBlockParagraph(list(parts))], type="1")
+
+        rich = types.InputRichMessage(blocks=[
+            types.InputRichBlockSectionHeading(f"⏳ {PENDING_TITLE}", size=1),
+            types.InputRichBlockDivider(),
+            types.InputRichBlockParagraph([
+                "Assistant ", who(bold=True), " needs admin approval to join this group and play music.",
+            ]),
+            types.InputRichBlockSectionHeading("Action Required", size=2),
+            types.InputRichBlockList([
+                step("Open the ", types.RichTextBold("Join Requests"), " list."),
+                step(types.RichTextBold("Approve"), " ", who(bold=False), "."),
+                step("Send the ", types.RichTextBold("play"), " command again."),
+            ]),
+            types.InputRichBlockBlockQuotation([
+                types.InputRichBlockParagraph([
+                    "💡 ", types.RichTextBold("Tip:"), " Make the bot Admin with ",
+                    types.RichTextBold("Invite Users"), " permission to auto-approve requests.",
+                ]),
+            ]),
+        ])
+
+        text = (
+            f"⏳ **{PENDING_TITLE}**\n\n"
+            f"Assistant **{label}** needs admin approval to join this group and play music.\n\n"
+            f"**Action Required**\n"
+            f"1. Open the **Join Requests** list.\n"
+            f"2. **Approve** {label}.\n"
+            f"3. Send the **play** command again.\n\n"
+            f"💡 **Tip:** Make the bot Admin with **Invite Users** permission to auto-approve requests."
+        )
+        from telecast.ui.keyboards import keyboards
+        return JoinNotice(text, rich, keyboards.close_only(chat_id))
+
+    @staticmethod
+    async def ensure_user_in_chat(bot_client: Client, user_client: Client, chat_id: int) -> Result:
+        try:
+            banned = False
             try:
                 member = await user_client.get_chat_member(chat_id, "me")
-                logger.info(f"User client is already in chat {chat_id}")
-                return True, None
+                if member.status == ChatMemberStatus.BANNED:
+                    banned = True
+                elif member.status != ChatMemberStatus.LEFT:
+                    logger.info(f"User client is already in chat {chat_id}")
+                    return True, None
             except UserBannedInChannel:
+                banned = True
+            except Exception as e:
+                if AutoJoinHandler._is_ban_error(e):
+                    logger.warning(f"User client appears to be banned in {chat_id} (error: {e})")
+                    banned = True
+
+            if banned:
                 logger.warning(f"User client is banned in {chat_id}, attempting to unban...")
                 success, msg = await AutoJoinHandler._handle_banned_user(bot_client, user_client, chat_id)
                 if not success:
                     return False, msg
-                logger.info(f"User client not in chat {chat_id}, starting auto-join process")
-            except Exception as e:
-                error_msg = str(e).lower()
 
-                ban_keywords = ['banned', 'ban', 'user_banned', 'kicked', 'channel_private']
-                if any(keyword in error_msg for keyword in ban_keywords):
-                    logger.warning(f"User client appears to be banned in {chat_id} (error: {e}), attempting to unban...")
-                    success, msg = await AutoJoinHandler._handle_banned_user(bot_client, user_client, chat_id)
-                    if not success:
-                        return False, msg
-
-                logger.info(f"User client not in chat {chat_id}, starting auto-join process")
-
+            logger.info(f"User client not in chat {chat_id}, starting auto-join process")
             chat = await bot_client.get_chat(chat_id)
 
             if chat.username:
                 return await AutoJoinHandler._join_public_group(bot_client, user_client, chat.username, chat_id)
-            else:
-                return await AutoJoinHandler._join_private_group(bot_client, user_client, chat_id)
+            return await AutoJoinHandler._join_private_group(bot_client, user_client, chat_id)
 
         except ChatAdminRequired:
             error_msg = "❌ **Bot needs admin permission**\n\nThe bot must be an admin with the following permissions:\n• Invite users\n• Export invite links\n• Manage voice chats"
@@ -49,334 +157,172 @@ class AutoJoinHandler:
             return False, error_msg
 
         except Exception as e:
+            if AutoJoinHandler._is_pending_error(e):
+                logger.info(f"Assistant join for {chat_id} is waiting on a join request ({e})")
+                return False, await AutoJoinHandler._pending_message(user_client, chat_id)
             error_msg = f"❌ **Failed to add user client to group**\n\nError: {str(e)}"
             logger.error(f"Unexpected error in auto-join for {chat_id}: {e}")
             return False, error_msg
 
     @staticmethod
-    async def _join_public_group(bot_client: Client, user_client: Client, username: str, chat_id: int) -> Tuple[bool, Optional[str]]:
+    async def _confirm_membership(user_client: Client, chat_id: int) -> str:
+        """Returns 'member', 'banned' or 'pending' (not a participant yet)."""
         try:
-            logger.info(f"Attempting to join public group @{username}")
-            await user_client.join_chat(username)
-            logger.info(f"Successfully joined public group @{username}")
-
-            await asyncio.sleep(1)
-            await user_client.get_chat_member(chat_id, "me")
-            return True, None
-
-        except UserAlreadyParticipant:
-            logger.info(f"User client already in public group @{username}")
-            return True, None
-
-        except Exception as e:
-            error_str = str(e)
-            error_str_lower = error_str.lower()
-
-            if 'INVITE_REQUEST_SENT' in error_str or 'invite_request_sent' in error_str_lower:
-                logger.info(f"Join request sent for @{username}, attempting to approve...")
-
-                try:
-                    user_id = user_client.me.id if hasattr(user_client, 'me') else None
-                    if not user_id:
-                        user_info = await user_client.get_me()
-                        user_id = user_info.id
-
-                    await bot_client.approve_chat_join_request(chat_id, user_id)
-                    logger.info(f"Approved join request for user {user_id} in @{username}")
-
-                    await asyncio.sleep(2)
-
-                    await user_client.get_chat_member(chat_id, "me")
-                    logger.info(f"User client confirmed as member after approval in @{username}")
-                    return True, None
-
-                except Exception as approve_error:
-                    error_msg = f"❌ **Join request sent but approval failed**\n\nPlease manually approve the join request in chat settings.\n\nError: {str(approve_error)}"
-                    logger.error(f"Failed to approve join request for @{username}: {approve_error}")
-                    return False, error_msg
-
-            if any(keyword in error_str_lower for keyword in ['banned', 'ban', 'username not found', 'user_banned', 'kicked', 'channel_private']):
-                logger.warning(f"User client appears to be banned in public group @{username} (error: {e}), attempting to unban...")
-                success, msg = await AutoJoinHandler._handle_banned_user(bot_client, user_client, chat_id)
-                if not success:
-                    return False, msg
-
-                try:
-                    await user_client.join_chat(username)
-                    logger.info(f"Successfully joined public group @{username} after unban")
-                    await asyncio.sleep(1)
-                    await user_client.get_chat_member(chat_id, "me")
-                    return True, None
-                except Exception as retry_error:
-                    retry_str = str(retry_error)
-
-                    if 'INVITE_REQUEST_SENT' in retry_str or 'invite_request_sent' in retry_str.lower():
-                        logger.info(f"Join request sent for @{username}, attempting to approve...")
-
-                        try:
-                            user_id = user_client.me.id if hasattr(user_client, 'me') else None
-                            if not user_id:
-                                user_info = await user_client.get_me()
-                                user_id = user_info.id
-
-                            await bot_client.approve_chat_join_request(chat_id, user_id)
-                            logger.info(f"Approved join request for user {user_id} in @{username}")
-
-                            await asyncio.sleep(2)
-
-                            await user_client.get_chat_member(chat_id, "me")
-                            logger.info(f"User client confirmed as member after approval in @{username}")
-                            return True, None
-
-                        except Exception as approve_error:
-                            error_msg = f"❌ **Join request sent but approval failed**\n\nPlease manually approve the join request in chat settings.\n\nError: {str(approve_error)}"
-                            logger.error(f"Failed to approve join request for @{username}: {approve_error}")
-                            return False, error_msg
-
-                    user_info = await user_client.get_me()
-                    uname = f"@{user_info.username}" if user_info.username else str(user_info.id)
-                    error_msg = (
-                        f"❌ **Assistant Account Banned**\n\n"
-                        f"Assistant account ({uname}) is currently banned in this group.\n\n"
-                        f"Please unban {uname} manually and then try again."
-                    )
-                    logger.error(f"Failed to join @{username} after unban: {retry_error}")
-                    return False, error_msg
-
-            raise
-
+            member = await user_client.get_chat_member(chat_id, "me")
         except UserBannedInChannel:
-            logger.warning(f"User client is banned in public group @{username}, attempting to unban...")
-            success, msg = await AutoJoinHandler._handle_banned_user(bot_client, user_client, chat_id)
-            if not success:
-                return False, msg
-
-            try:
-                await user_client.join_chat(username)
-                logger.info(f"Successfully joined public group @{username} after unban")
-                await asyncio.sleep(1)
-                await user_client.get_chat_member(chat_id, "me")
-                return True, None
-            except Exception as retry_error:
-                retry_str = str(retry_error)
-
-                if 'INVITE_REQUEST_SENT' in retry_str or 'invite_request_sent' in retry_str.lower():
-                    logger.info(f"Join request sent for @{username}, attempting to approve...")
-
-                    try:
-                        user_id = user_client.me.id if hasattr(user_client, 'me') else None
-                        if not user_id:
-                            user_info = await user_client.get_me()
-                            user_id = user_info.id
-
-                        await bot_client.approve_chat_join_request(chat_id, user_id)
-                        logger.info(f"Approved join request for user {user_id} in @{username}")
-
-                        await asyncio.sleep(2)
-
-                        await user_client.get_chat_member(chat_id, "me")
-                        logger.info(f"User client confirmed as member after approval in @{username}")
-                        return True, None
-
-                    except Exception as approve_error:
-                        error_msg = f"❌ **Join request sent but approval failed**\n\nPlease manually approve the join request in chat settings.\n\nError: {str(approve_error)}"
-                        logger.error(f"Failed to approve join request for @{username}: {approve_error}")
-                        return False, error_msg
-
-                error_msg = f"❌ **Failed to join after unban**\n\nError: {str(retry_error)}"
-                logger.error(f"Failed to join @{username} after unban: {retry_error}")
-                return False, error_msg
-
-        except FloodWait as e:
-            error_msg = f"❌ **Rate limited**\n\nPlease wait {e.value} seconds and try again."
-            logger.warning(f"FloodWait {e.value}s when joining @{username}")
-            return False, error_msg
-
-        except UsersTooMuch:
-            error_msg = "❌ **Group is full**\n\nThe group has reached its member limit."
-            logger.error(f"Group @{username} is full")
-            return False, error_msg
-
+            return 'banned'
         except Exception as e:
-            error_msg = f"❌ **Failed to join public group**\n\nError: {str(e)}"
-            logger.error(f"Failed to join public group @{username}: {e}")
-            return False, error_msg
+            if AutoJoinHandler._is_pending_error(e):
+                return 'pending'
+            if AutoJoinHandler._is_ban_error(e):
+                return 'banned'
+            raise
+        if member.status == ChatMemberStatus.BANNED:
+            return 'banned'
+        if member.status == ChatMemberStatus.LEFT:
+            return 'pending'
+        return 'member'
 
     @staticmethod
-    async def _join_private_group(bot_client: Client, user_client: Client, chat_id: int) -> Tuple[bool, Optional[str]]:
+    async def _handle_pending_request(bot_client: Client, user_client: Client, chat_id: int) -> Result:
+        """The join was sent as a request: try to approve it as the bot, otherwise tell the admins what to do."""
+        try:
+            me = await AutoJoinHandler._assistant_identity(user_client)
+            logger.info(f"Join request pending for assistant {me.id} in {chat_id}, trying to approve as bot")
+            await bot_client.approve_chat_join_request(chat_id, me.id)
+            logger.info(f"Approved join request for assistant {me.id} in {chat_id}")
+        except Exception as approve_error:
+            logger.warning(f"Bot could not approve the assistant's join request in {chat_id}: {approve_error}")
+            return False, await AutoJoinHandler._pending_message(user_client, chat_id)
+
+        for _ in range(3):
+            await asyncio.sleep(2)
+            try:
+                if await AutoJoinHandler._confirm_membership(user_client, chat_id) == 'member':
+                    logger.info(f"Assistant confirmed as member of {chat_id} after approval")
+                    return True, None
+            except Exception as check_error:
+                logger.debug(f"Membership re-check failed in {chat_id}: {check_error}")
+        return False, await AutoJoinHandler._pending_message(user_client, chat_id)
+
+    @staticmethod
+    async def _invite_link(bot_client: Client, chat_id: int, fresh: bool = False) -> Tuple[Optional[str], Optional[str]]:
+        if not fresh:
+            try:
+                chat = await bot_client.get_chat(chat_id)
+                if getattr(chat, 'invite_link', None):
+                    logger.info(f"Using existing invite link for {chat_id}")
+                    return chat.invite_link, None
+            except Exception:
+                pass
+        try:
+            logger.info(f"Exporting new invite link for {chat_id}")
+            return await bot_client.export_chat_invite_link(chat_id), None
+        except ChatAdminRequired:
+            logger.error(f"Bot lacks permission to export invite link in {chat_id}")
+            return None, "❌ **Bot needs admin permission**\n\nThe bot must be an admin to invite the assistant account."
+        except Exception as e:
+            logger.error(f"Failed to export invite link for {chat_id}: {e}")
+            return None, f"❌ **Failed to create invite link**\n\nError: {str(e)}"
+
+    @staticmethod
+    async def _join(bot_client: Client, user_client: Client, chat_id: int, username: Optional[str], allow_unban: bool = True) -> Result:
+        if username:
+            target = username
+        else:
+            target, link_error = await AutoJoinHandler._invite_link(bot_client, chat_id, fresh=not allow_unban)
+            if not target:
+                return False, link_error
+
+        banned = pending = False
+        try:
+            logger.info(f"Assistant joining {chat_id} via {'@' + username if username else 'invite link'}")
+            await user_client.join_chat(target)
+        except UserAlreadyParticipant:
+            logger.info(f"Assistant already in {chat_id}")
+            return True, None
+        except FloodWait as e:
+            logger.warning(f"FloodWait {e.value}s when joining {chat_id}")
+            return False, f"❌ **Rate limited**\n\nPlease wait {e.value} seconds and try again."
+        except UsersTooMuch:
+            logger.error(f"Group {chat_id} is full")
+            return False, "❌ **Group is full**\n\nThe group has reached its member limit."
+        except (UserBannedInChannel, InviteHashExpired):
+            banned = True
+        except Exception as e:
+            if AutoJoinHandler._is_pending_error(e):
+                pending = True
+            elif AutoJoinHandler._is_ban_error(e):
+                banned = True
+            else:
+                raise
+
+        if not banned and not pending:
+            await asyncio.sleep(1.5)
+            state = await AutoJoinHandler._confirm_membership(user_client, chat_id)
+            if state == 'member':
+                logger.info(f"Assistant confirmed as member of {chat_id}")
+                return True, None
+            banned, pending = state == 'banned', state == 'pending'
+
+        if pending:
+            return await AutoJoinHandler._handle_pending_request(bot_client, user_client, chat_id)
+
+        logger.warning(f"Assistant appears to be banned in {chat_id}")
+        if not allow_unban:
+            return False, await AutoJoinHandler._banned_message(user_client)
+        success, msg = await AutoJoinHandler._handle_banned_user(bot_client, user_client, chat_id)
+        if not success:
+            return False, msg
+        return await AutoJoinHandler._join(bot_client, user_client, chat_id, username, allow_unban=False)
+
+    @staticmethod
+    async def _join_public_group(bot_client: Client, user_client: Client, username: str, chat_id: int) -> Result:
+        try:
+            return await AutoJoinHandler._join(bot_client, user_client, chat_id, username)
+        except ChatAdminRequired:
+            raise
+        except Exception as e:
+            if AutoJoinHandler._is_pending_error(e):
+                return False, await AutoJoinHandler._pending_message(user_client, chat_id)
+            logger.error(f"Failed to join public group @{username}: {e}")
+            return False, f"❌ **Failed to join public group**\n\nError: {str(e)}"
+
+    @staticmethod
+    async def _join_private_group(bot_client: Client, user_client: Client, chat_id: int) -> Result:
         temp_message = None
         try:
             temp_message = await bot_client.send_message(
                 chat_id,
                 "🔄 **Adding assistant to group...**\n\nPlease wait a moment."
             )
-
-            invite_link = None
-            try:
-                chat = await bot_client.get_chat(chat_id)
-                if hasattr(chat, 'invite_link') and chat.invite_link:
-                    invite_link = chat.invite_link
-                    logger.info(f"Using existing invite link for {chat_id}")
-            except:
-                pass
-
-            if not invite_link:
-                try:
-                    logger.info(f"Exporting new invite link for {chat_id}")
-                    exported_link = await bot_client.export_chat_invite_link(chat_id)
-                    invite_link = exported_link
-                    logger.info(f"Exported new invite link for {chat_id}")
-                except ChatAdminRequired:
-                    if temp_message:
-                        await temp_message.delete()
-                    error_msg = "❌ **Bot needs admin permission**\n\nThe bot must be an admin to invite the assistant account."
-                    logger.error(f"Bot lacks permission to export invite link in {chat_id}")
-                    return False, error_msg
-                except Exception as e:
-                    if temp_message:
-                        await temp_message.delete()
-                    error_msg = f"❌ **Failed to create invite link**\n\nError: {str(e)}"
-                    logger.error(f"Failed to export invite link for {chat_id}: {e}")
-                    return False, error_msg
-
-            try:
-                logger.info(f"User client joining private group {chat_id} via invite link")
-                await user_client.join_chat(invite_link)
-                logger.info(f"Successfully joined private group {chat_id}")
-
-                await asyncio.sleep(2)
-
-                try:
-                    member = await user_client.get_chat_member(chat_id, "me")
-
-                    logger.info(f"User client confirmed as member of {chat_id}")
-
-                except Exception as check_error:
-                    logger.warning(f"Could not confirm membership, checking for pending join request: {check_error}")
-
-                    try:
-                        user_id = user_client.me.id if hasattr(user_client, 'me') else None
-                        if not user_id:
-                            user_info = await user_client.get_me()
-                            user_id = user_info.id
-
-                        logger.info(f"Attempting to approve join request for user {user_id} in {chat_id}")
-                        await bot_client.approve_chat_join_request(chat_id, user_id)
-                        logger.info(f"Approved join request for user {user_id} in {chat_id}")
-
-                        await asyncio.sleep(2)
-
-                        await user_client.get_chat_member(chat_id, "me")
-                        logger.info(f"User client confirmed as member after approval in {chat_id}")
-
-                    except Exception as approve_error:
-                        logger.error(f"Failed to approve join request: {approve_error}")
-                        if temp_message:
-                            await temp_message.delete()
-                        error_msg = "❌ **Could not join group**\n\nThe assistant account needs to be approved to join this group. Please manually approve the join request or make the bot an admin."
-                        return False, error_msg
-
-                if temp_message:
-                    try:
-                        await temp_message.delete()
-                    except:
-                        pass
-
+            result = await AutoJoinHandler._join(bot_client, user_client, chat_id, None)
+            if result[0]:
                 try:
                     await user_client.resolve_peer(chat_id)
                     logger.info(f"Resolved peer for {chat_id} to refresh session")
-                except:
+                except Exception:
                     pass
-
-                return True, None
-
-            except UserAlreadyParticipant:
-                logger.info(f"User client already in private group {chat_id}")
-                if temp_message:
-                    await temp_message.delete()
-                return True, None
-
-            except InviteHashExpired:
-                if temp_message:
-                    await temp_message.delete()
-                logger.warning(f"Invite link expired for {chat_id}, user client may be banned — attempting unban")
-                success, msg = await AutoJoinHandler._handle_banned_user(bot_client, user_client, chat_id)
-                if not success:
-                    return False, msg
-                try:
-                    new_link = await bot_client.export_chat_invite_link(chat_id)
-                    await user_client.join_chat(new_link)
-                    await asyncio.sleep(1)
-                    await user_client.get_chat_member(chat_id, "me")
-                    logger.info(f"Successfully joined {chat_id} after unban + new invite link")
-                    return True, None
-                except Exception as retry_err:
-                    user_info = await user_client.get_me()
-                    username = f"@{user_info.username}" if user_info.username else str(user_info.id)
-                    error_msg = (
-                        f"❌ **Assistant Account Banned**\n\n"
-                        f"Assistant account ({username}) is currently banned in this group.\n\n"
-                        f"Please unban {username} manually and then try again."
-                    )
-                    logger.error(f"Still failed to join {chat_id} after unban: {retry_err}")
-                    return False, error_msg
-
-            except FloodWait as e:
-                if temp_message:
-                    await temp_message.delete()
-                error_msg = f"❌ **Rate limited**\n\nPlease wait {e.value} seconds and try again."
-                logger.warning(f"FloodWait {e.value}s when joining {chat_id}")
-                return False, error_msg
-
-            except UserBannedInChannel:
-                if temp_message:
-                    await temp_message.delete()
-                logger.warning(f"User client is banned in private group {chat_id}, attempting unban...")
-                success, msg = await AutoJoinHandler._handle_banned_user(bot_client, user_client, chat_id)
-                if not success:
-                    return False, msg
-                try:
-                    new_link = await bot_client.export_chat_invite_link(chat_id)
-                    await user_client.join_chat(new_link)
-                    await asyncio.sleep(1)
-                    await user_client.get_chat_member(chat_id, "me")
-                    logger.info(f"Successfully joined private group {chat_id} after unban")
-                    return True, None
-                except Exception as retry_err:
-                    user_info = await user_client.get_me()
-                    username = f"@{user_info.username}" if user_info.username else str(user_info.id)
-                    error_msg = (
-                        f"❌ **Assistant Account Banned**\n\n"
-                        f"Assistant account ({username}) is currently banned in this group.\n\n"
-                        f"Please unban {username} manually and then try again."
-                    )
-                    logger.error(f"Still failed to join private group {chat_id} after unban: {retry_err}")
-                    return False, error_msg
-
-            except UsersTooMuch:
-                if temp_message:
-                    await temp_message.delete()
-                error_msg = "❌ **Group is full**\n\nThe group has reached its member limit."
-                logger.error(f"Group {chat_id} is full")
-                return False, error_msg
-
+            return result
+        except ChatAdminRequired:
+            raise
         except Exception as e:
+            if AutoJoinHandler._is_pending_error(e):
+                return False, await AutoJoinHandler._pending_message(user_client, chat_id)
+            logger.error(f"Failed to join private group {chat_id}: {e}")
+            return False, f"❌ **Failed to join private group**\n\nError: {str(e)}"
+        finally:
             if temp_message:
                 try:
                     await temp_message.delete()
-                except:
+                except Exception:
                     pass
-            error_msg = f"❌ **Failed to join private group**\n\nError: {str(e)}"
-            logger.error(f"Failed to join private group {chat_id}: {e}")
-            return False, error_msg
 
     @staticmethod
-    async def _handle_banned_user(bot_client: Client, user_client: Client, chat_id: int) -> Tuple[bool, Optional[str]]:
+    async def _handle_banned_user(bot_client: Client, user_client: Client, chat_id: int) -> Result:
+        user_id = None
         try:
-            user_id = user_client.me.id if hasattr(user_client, 'me') else None
-            if not user_id:
-                user_info = await user_client.get_me()
-                user_id = user_info.id
+            user_id = (await AutoJoinHandler._assistant_identity(user_client)).id
 
             logger.info(f"Attempting to unban user {user_id} in {chat_id}")
 
@@ -388,18 +334,8 @@ class AutoJoinHandler:
             return True, None
 
         except ChatAdminRequired:
-            try:
-                user_info = await user_client.get_me()
-                username = f"@{user_info.username}" if user_info.username else str(user_id)
-            except Exception:
-                username = str(user_id)
-            error_msg = (
-                f"❌ **Assistant Account Banned**\n\n"
-                f"Assistant account ({username}) is currently banned in this group.\n\n"
-                f"Please unban {username} manually and then try again."
-            )
             logger.error(f"Bot lacks permission to unban user in {chat_id}")
-            return False, error_msg
+            return False, await AutoJoinHandler._banned_message(user_client)
 
         except Exception as e:
             error_str = str(e).lower()
@@ -408,17 +344,7 @@ class AutoJoinHandler:
                 logger.info(f"User {user_id} is not banned in {chat_id}, just not a member")
                 return True, None
 
-            try:
-                user_info = await user_client.get_me()
-                username = f"@{user_info.username}" if user_info.username else str(user_id)
-            except Exception:
-                username = str(user_id)
-            error_msg = (
-                f"❌ **Assistant Account Banned**\n\n"
-                f"Assistant account ({username}) is currently banned in this group.\n\n"
-                f"Please unban {username} manually and then try again."
-            )
             logger.error(f"Failed to unban user in {chat_id}: {e}")
-            return False, error_msg
+            return False, await AutoJoinHandler._banned_message(user_client)
 
 auto_join_handler = AutoJoinHandler()

@@ -1,11 +1,13 @@
 # Copyright (C) @itsSmartDev
 
 from pyrogram import Client
+from pyrogram.enums import ParseMode
 from pyrogram.types import Message
 
 from telecast.db import db
 from telecast.services.queue import queue_manager
 from telecast.services.downloader import downloader
+from telecast.utils.rich import edit_to_playlist_ready
 from telecast.utils.permissions import permission_checker
 from telecast.utils.validators import validators
 from telecast.ui.keyboards import keyboards
@@ -50,7 +52,7 @@ async def play_command(client: Client, message: Message, player, tgcalls):
                 dur_m = int((file_duration % 3600) // 60)
                 await status_msg.edit_text(
                     f"⏱️ **Track Too Long**\n\n"
-                    f"![🎸](tg://emoji?id=5465665777619204788) {file_info.get('title', 'This file')}\n"
+                    f"![🎸](tg://emoji?id=5222472119295684375) {file_info.get('title', 'This file')}\n"
                     f"⌛️ **Duration:** {dur_h}h {dur_m}m\n"
                     f"⚠️ **Limit:** {hours}h max\n\n"
                     f"Please choose a shorter track."
@@ -101,7 +103,7 @@ async def play_command(client: Client, message: Message, player, tgcalls):
                 old_np_id = player.get_now_playing_message(message.chat.id)
                 msg = await message.reply_text(
                     messages.now_playing(current, current.get('requested_by', 'Unknown'), current_time, queue, playlist_unfetched),
-                    reply_markup=keyboards.player_controls(message.chat.id, is_paused, current_time, total_time, is_live, loop_mode)
+                    reply_markup=keyboards.player_controls(message.chat.id, is_paused, current_time, total_time, is_live, loop_mode, len(queue), settings.get('autoplay', False))
                 )
                 if old_np_id and old_np_id != msg.id:
                     try:
@@ -173,15 +175,13 @@ async def play_command(client: Client, message: Message, player, tgcalls):
                 first_track_line = f"{first_track_artist} — {first_track_title}"
             else:
                 first_track_line = first_track_title
-            try:
-                await status_msg.edit_text(
-                    f"🎧 **Playlist Ready**\n\n"
-                    f"• Added to queue: **{loaded} tracks**\n"
-                    f"• Playlist contains: **{total} tracks{cap_note}**\n\n"
-                    f"▶️ **First Track:**\n{first_track_line}"
-                )
-            except Exception:
-                pass
+            await edit_to_playlist_ready(
+                status_msg, loaded, total, cap_note, first_track_line,
+                f"🎧 **Playlist Ready**\n\n"
+                f"• Added to queue: **{loaded} tracks**\n"
+                f"• Playlist contains: **{total} tracks{cap_note}**\n\n"
+                f"▶️ **First Track:**\n{first_track_line}",
+            )
 
             if not await player.is_playing(message.chat.id):
                 current = await queue_manager.get_current_track(message.chat.id)
@@ -206,7 +206,7 @@ async def play_command(client: Client, message: Message, player, tgcalls):
             dur_m = int((track_duration % 3600) // 60)
             await status_msg.edit_text(
                 f"⏱️ **Track Too Long**\n\n"
-                f"![🎸](tg://emoji?id=5465665777619204788) {metadata.get('title', 'This track')}\n"
+                f"![🎸](tg://emoji?id=5222472119295684375) {metadata.get('title', 'This track')}\n"
                 f"⌛️ **Duration:** {dur_h}h {dur_m}m\n"
                 f"⚠️ **Limit:** {hours}h max\n\n"
                 f"Please choose a shorter track."
@@ -225,6 +225,18 @@ async def play_command(client: Client, message: Message, player, tgcalls):
             'requested_by_id': message.from_user.id if message.from_user else 0,
             '_raw_info': metadata.get('_raw_info'),
         }
+
+        if await player.is_playing(message.chat.id):
+            current = await player.get_current_track(message.chat.id)
+            current_video_id = downloader.track_video_id(current) if current else None
+            if current_video_id and current_video_id == downloader.track_video_id(track):
+                logger.info(f"Refused duplicate play of '{track['title']}' in {message.chat.id} (already playing)")
+                await status_msg.edit_text(
+                    f"🔁 **Already Playing**\n\n"
+                    f"![🎸](tg://emoji?id=5222472119295684375) {track['title']}\n\n"
+                    f"⚠️ **This music is already playing in the voice chat.**"
+                )
+                return
 
         await queue_manager.add_track(message.chat.id, track)
 
@@ -262,7 +274,7 @@ async def play_command(client: Client, message: Message, player, tgcalls):
             old_np_id = player.get_now_playing_message(message.chat.id)
             msg = await message.reply_text(
                 messages.now_playing(current, current.get('requested_by', 'Unknown'), current_time, queue, playlist_unfetched),
-                reply_markup=keyboards.player_controls(message.chat.id, is_paused, current_time, total_time, is_live, loop_mode)
+                reply_markup=keyboards.player_controls(message.chat.id, is_paused, current_time, total_time, is_live, loop_mode, len(queue), settings.get('autoplay', False))
             )
             if old_np_id and old_np_id != msg.id:
                 try:
@@ -298,7 +310,7 @@ async def pause_command(client: Client, message: Message, player):
 
     result = await player.pause(message.chat.id)
     if result is True:
-        await message.reply_text("⏸️ **Playback paused.**")
+        await message.reply_text("![⏸️](tg://emoji?id=6111404923637733475) **Playback paused.**")
     elif result is None:
         await message.reply_text("⏸️ **Playback is already paused.**")
     else:
@@ -321,7 +333,7 @@ async def resume_command(client: Client, message: Message, player):
 
     result = await player.resume(message.chat.id)
     if result is True:
-        await message.reply_text("▶️ **Playback resumed.**")
+        await message.reply_text("![▶️](tg://emoji?id=5850346984501680054) **Playback resumed.**")
     elif result is None:
         await message.reply_text("▶️ **Music is already playing.**")
     else:
@@ -349,9 +361,15 @@ async def skip_command(client: Client, message: Message, player):
     user_name = message.from_user.first_name if message.from_user else "Unknown"
     user_id = message.from_user.id if message.from_user else "Unknown"
     logger.info(f"SKIP COMMAND - User: {user_name} (ID: {user_id}) skipped in chat {message.chat.id}")
-    status_msg = await message.reply_text("⏭️ **Skipping to next track...**")
+    status_msg = await message.reply_text("![⏭️](tg://emoji?id=6111707078881975618) **Skipping to next track...**")
     await player.skip(message.chat.id)
-    await status_msg.edit_text("⏭️ **Skipped to the next track.**")
+    try:
+        await status_msg.edit_text(
+            '<emoji id="6111707078881975618">⏭️</emoji> <b>Skipped to the next track.</b>',
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception:
+        await status_msg.edit_text("⏭️ **Skipped to the next track.**")
 
 
 async def stop_command(client: Client, message: Message, player):
@@ -371,7 +389,7 @@ async def stop_command(client: Client, message: Message, player):
     status_msg = await message.reply_text("🛑 **Stopping playback...**")
     if await player.stop(message.chat.id):
         await queue_manager.clear_queue(message.chat.id)
-        await status_msg.edit_text("🛑 **Player stopped and voice chat left.**")
+        await status_msg.edit_text("![🚫](tg://emoji?id=5280803324273115630) **Player stopped and voice chat left.**")
     else:
         await status_msg.edit_text("🛑 **The player is not running right now.**")
 
@@ -431,7 +449,7 @@ async def mute_command(client: Client, message: Message, player):
 
     try:
         await player.mute(message.chat.id)
-        await message.reply_text("🔇 **Voice chat muted successfully.**")
+        await message.reply_text("![🔇](tg://emoji?id=5408916593780470262) **Voice chat muted successfully.**")
     except Exception as e:
         logger.error(f"Error in mute command: {e}")
         await message.reply_text(messages.error(str(e)))
@@ -443,7 +461,7 @@ async def unmute_command(client: Client, message: Message, player):
 
     try:
         await player.unmute(message.chat.id)
-        await message.reply_text("🔊 **Voice chat unmuted.**")
+        await message.reply_text("![🔊](tg://emoji?id=5260325873688518261) **Voice chat unmuted.**")
     except Exception as e:
         logger.error(f"Error in unmute command: {e}")
         await message.reply_text(messages.error(str(e)))

@@ -16,7 +16,7 @@ _ACCENT_SONGS = (167, 116, 255)
 _ACCENT_PEOPLE = (56, 189, 248)
 _ACCENT_TIME = (74, 222, 128)
 
-Row = Tuple[str, int, str]
+Row = Tuple[str, int, str, Optional[bytes]]
 
 
 def _fmt_duration(seconds: int) -> str:
@@ -26,32 +26,34 @@ def _fmt_duration(seconds: int) -> str:
     return f"{hours}h {minutes}m"
 
 
-def _users_rows(top_users: List[dict]) -> List[Row]:
+def _users_rows(top_users: List[dict], avatars: Dict) -> List[Row]:
     rows: List[Row] = []
     for u in top_users or []:
         ident = u.get("_id") or {}
         name = (ident.get("user_name") if isinstance(ident, dict) else None) or "Unknown"
-        rows.append((str(name), int(u.get("count", 0)), "songs"))
+        uid = ident.get("user_id") if isinstance(ident, dict) else None
+        rows.append((str(name), int(u.get("count", 0)), "songs", avatars.get(("user", uid))))
     return rows
 
 
-def _songs_rows(top_songs: List[dict]) -> List[Row]:
+def _songs_rows(top_songs: List[dict], avatars: Dict) -> List[Row]:
     rows: List[Row] = []
     for s in top_songs or []:
         title = s.get("_id") or "Unknown"
-        rows.append((str(title), int(s.get("count", 0)), "plays"))
+        rows.append((str(title), int(s.get("count", 0)), "plays", avatars.get(("song", s.get("thumb")))))
     return rows
 
 
-def _groups_rows(top_groups: List[dict]) -> List[Row]:
+def _groups_rows(top_groups: List[dict], avatars: Dict) -> List[Row]:
     rows: List[Row] = []
     for g in top_groups or []:
         title = g.get("chat_title", "Unknown Group") or "Unknown Group"
-        rows.append((str(title), int(g.get("count", 0)), "songs"))
+        rows.append((str(title), int(g.get("count", 0)), "songs", avatars.get(("chat", g.get("_id")))))
     return rows
 
 
-def build_rankings_banner(scope: str, stats: Dict, output_path: Optional[str] = None) -> Optional[str]:
+def build_rankings_banner(scope: str, stats: Dict, output_path: Optional[str] = None, avatars: Optional[Dict] = None) -> Optional[str]:
+    avatars = avatars or {}
     if not stats or not stats.get("total_stats"):
         return None
 
@@ -67,14 +69,14 @@ def build_rankings_banner(scope: str, stats: Dict, output_path: Optional[str] = 
     if scope == "global":
         unique_groups = len(total.get("unique_groups", []) or [])
         panels = [
-            ("TOP 5 GROUPS", "group", PALETTE["violet"], _groups_rows(stats.get("top_groups", []))),
-            ("TOP 5 USERS", "user", PALETTE["cyan"], _users_rows(stats.get("top_users", []))),
-            ("TOP 5 SONGS", "music", PALETTE["pink"], _songs_rows(stats.get("top_songs", []))),
+            ("TOP 5 GROUPS", "group", PALETTE["violet"], _groups_rows(stats.get("top_groups", []), avatars), "Most active music communities worldwide"),
+            ("TOP 5 USERS", "user", PALETTE["cyan"], _users_rows(stats.get("top_users", []), avatars), "Most active listeners across all communities"),
+            ("TOP 5 SONGS", "music", PALETTE["pink"], _songs_rows(stats.get("top_songs", []), avatars), "Most played tracks across all communities"),
         ]
         stat_cards = [
-            ("music", str(total_songs), "TOTAL SONGS", "All tracked tracks", _ACCENT_SONGS),
+            ("music", str(total_songs), "TOTAL SONGS", "All tracked tracks across communities", _ACCENT_SONGS),
             ("group", str(unique_groups), "TOTAL GROUPS", "Active communities", _ACCENT_PEOPLE),
-            ("clock", duration, "TOTAL TIME", "Listening duration", _ACCENT_TIME),
+            ("clock", duration, "TOTAL LISTENING TIME", "Combined listening duration", _ACCENT_TIME),
         ]
         render_banner(
             output=out,
@@ -91,8 +93,8 @@ def build_rankings_banner(scope: str, stats: Dict, output_path: Optional[str] = 
     is_weekly = scope == "weekly"
     unique_users = len(total.get("unique_users", []) or [])
     panels = [
-        ("TOP 5 USERS", "user", PALETTE["cyan"], _users_rows(stats.get("top_users", []))),
-        ("TOP 5 SONGS", "music", PALETTE["pink"], _songs_rows(stats.get("top_songs", []))),
+        ("TOP 5 USERS", "user", PALETTE["cyan"], _users_rows(stats.get("top_users", []), avatars), "Top listeners in this group"),
+        ("TOP 5 SONGS", "music", PALETTE["pink"], _songs_rows(stats.get("top_songs", []), avatars), "Most played tracks in this group"),
     ]
     stat_cards = [
         ("music", str(total_songs), "TOTAL SONGS",
@@ -116,9 +118,9 @@ def build_rankings_banner(scope: str, stats: Dict, output_path: Optional[str] = 
     return str(out)
 
 
-async def generate_rankings_banner(scope: str, stats: Dict, timeout: float = 25.0) -> Optional[str]:
+async def generate_rankings_banner(scope: str, stats: Dict, avatars: Optional[Dict] = None, timeout: float = 25.0) -> Optional[str]:
     try:
-        return await asyncio.wait_for(asyncio.to_thread(build_rankings_banner, scope, stats), timeout=timeout)
+        return await asyncio.wait_for(asyncio.to_thread(build_rankings_banner, scope, stats, None, avatars), timeout=timeout)
     except Exception as e:
         logger.error(f"Rankings banner generation failed ({scope}): {e}")
         return None

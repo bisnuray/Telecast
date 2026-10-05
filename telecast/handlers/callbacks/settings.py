@@ -4,6 +4,7 @@ from telecast.db import db
 from telecast.utils.permissions import permission_checker
 from telecast.ui.keyboards import keyboards
 from telecast.ui.messages import messages
+from telecast.utils.rich import show_settings
 
 
 async def handle(client, callback_query, player, user_client, settings):
@@ -13,16 +14,33 @@ async def handle(client, callback_query, player, user_client, settings):
 
     if data.startswith("settings_"):
         settings = await db.get_chat_settings(chat_id)
-        await message.edit_text(
-            messages.settings_info(settings),
-            reply_markup=keyboards.settings_menu(chat_id, settings)
-        )
+        await show_settings(message, keyboards.settings_menu(chat_id, settings), messages.settings_info(settings))
 
     elif data.startswith("toggle_mode_"):
         settings = await db.get_chat_settings(chat_id)
         new_mode = "video" if settings.get('mode') == "audio" else "audio"
         await db.update_chat_settings(chat_id, {'mode': new_mode})
         await callback_query.answer(f"Mode: {new_mode}")
+
+        settings = await db.get_chat_settings(chat_id)
+        await message.edit_reply_markup(keyboards.settings_menu(chat_id, settings))
+
+    elif data.startswith("toggle_autoplay_perm_"):
+        settings = await db.get_chat_settings(chat_id)
+        current_perm = settings.get('autoplay_permission', 'everyone')
+        new_perm = 'admin' if current_perm == 'everyone' else 'everyone'
+        await db.update_chat_settings(chat_id, {'autoplay_permission': new_perm})
+        label = "Admin Only" if new_perm == 'admin' else "Everyone"
+        await callback_query.answer(f"Autoplay Permission: {label}")
+
+        settings = await db.get_chat_settings(chat_id)
+        await message.edit_reply_markup(keyboards.settings_menu(chat_id, settings))
+
+    elif data.startswith("toggle_vc_welcome_"):
+        settings = await db.get_chat_settings(chat_id)
+        new_welcome = not settings.get('vc_welcome', True)
+        await db.update_chat_settings(chat_id, {'vc_welcome': new_welcome})
+        await callback_query.answer(f"VC Welcome: {'Enabled' if new_welcome else 'Disabled'}")
 
         settings = await db.get_chat_settings(chat_id)
         await message.edit_reply_markup(keyboards.settings_menu(chat_id, settings))
@@ -120,10 +138,7 @@ async def handle(client, callback_query, player, user_client, settings):
         await callback_query.answer(f"Quality: {quality}")
 
         settings = await db.get_chat_settings(chat_id)
-        await message.edit_text(
-            messages.settings_info(settings),
-            reply_markup=keyboards.settings_menu(chat_id, settings)
-        )
+        await show_settings(message, keyboards.settings_menu(chat_id, settings), messages.settings_info(settings))
 
     elif data.startswith("audioquality_"):
         settings = await db.get_chat_settings(chat_id)
@@ -139,7 +154,4 @@ async def handle(client, callback_query, player, user_client, settings):
         await callback_query.answer(f"Audio Quality: {audio_quality.capitalize()} (applies to the next track)")
 
         settings = await db.get_chat_settings(chat_id)
-        await message.edit_text(
-            messages.settings_info(settings),
-            reply_markup=keyboards.settings_menu(chat_id, settings)
-        )
+        await show_settings(message, keyboards.settings_menu(chat_id, settings), messages.settings_info(settings))

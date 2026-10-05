@@ -12,10 +12,12 @@ class ChatSettingsMixin:
                 "audio_effect": "none",
                 "playback_speed": 1.0,
                 "autoplay": False,
+                "autoplay_permission": "everyone",
                 "title_update": False,
                 "preferred_source": "youtube",
                 "loop_mode": "off",
-                "mention_requester": True
+                "mention_requester": True,
+                "vc_welcome": True
             }
             await self.db.chat_settings.insert_one(settings)
         return settings

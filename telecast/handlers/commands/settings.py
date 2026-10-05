@@ -7,6 +7,7 @@ from telecast.db import db
 from telecast.utils.permissions import permission_checker
 from telecast.ui.keyboards import keyboards
 from telecast.ui.messages import messages
+from telecast.utils.rich import reply_settings
 from telecast.core.logging import logger
 
 
@@ -22,10 +23,9 @@ async def settings_command(client: Client, message: Message):
         return
 
     settings = await db.get_chat_settings(message.chat.id)
-    await message.reply_text(
-        messages.settings_info(settings),
-        reply_markup=keyboards.settings_menu(message.chat.id, settings)
-    )
+    markup = keyboards.settings_menu(message.chat.id, settings)
+    if not await reply_settings(message, markup):
+        await message.reply_text(messages.settings_info(settings), reply_markup=markup)
 
 
 async def vcadmin_command(client: Client, message: Message):

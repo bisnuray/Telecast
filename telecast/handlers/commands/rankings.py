@@ -10,6 +10,7 @@ from telecast.core.logging import logger
 from telecast.ui.keyboards import keyboards
 from telecast.ui.messages import messages
 from telecast.ui.rankings import adapter as rankings_banner
+from telecast.ui.rankings.avatars import collect_avatars
 
 _RANK_PERIODS = {"daily": "Daily", "weekly": "Weekly", "global": "Global"}
 
@@ -47,7 +48,8 @@ async def show_rankings(client: Client, message: Message, chat_id: int, scope: s
     else:
         stats = await db.get_group_stats(chat_id, scope)
 
-    path = await rankings_banner.generate_rankings_banner(scope, stats)
+    avatars = await collect_avatars(client, stats)
+    path = await rankings_banner.generate_rankings_banner(scope, stats, avatars)
 
     if path:
         try:

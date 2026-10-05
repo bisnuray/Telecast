@@ -14,6 +14,7 @@ class Config:
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
     BOT_OWNER_ID = 1783730975
     LOG_CHAT_ID = int(os.getenv("LOG_CHAT_ID", "0"))
+    CACHE_CHAT_ID = int(os.getenv("CACHE_CHAT_ID", "0"))
 
     MAX_QUEUE_SIZE = int(os.getenv("MAX_QUEUE_SIZE", "100"))
     MAX_CONCURRENT_CHATS = int(os.getenv("MAX_CONCURRENT_CHATS", "50"))
@@ -25,6 +26,9 @@ class Config:
     LOGS_DIR = "logs"
 
     PREFETCH_ENABLED = os.getenv("PREFETCH_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+
+    AUTOPLAY_BATCH_SIZE = int(os.getenv("AUTOPLAY_BATCH_SIZE", "5"))
+    AUTOPLAY_PROMPT_TIMEOUT = int(os.getenv("AUTOPLAY_PROMPT_TIMEOUT", "90"))
 
     DEFAULT_QUALITY = "720p"
     DEFAULT_AUDIO_BITRATE = "128k"

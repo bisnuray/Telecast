@@ -73,7 +73,7 @@ async def playlist_command(client: Client, message: Message, player):
         playlist_msg = messages.now_playing(current, current.get('requested_by', 'Unknown'), 0, queue, playlist_unfetched)
         msg = await message.reply_text(
             playlist_msg,
-            reply_markup=keyboards.player_controls(message.chat.id, is_paused, current_time, total_time, current.get('is_live', False), loop_mode)
+            reply_markup=keyboards.player_controls(message.chat.id, is_paused, current_time, total_time, current.get('is_live', False), loop_mode, len(queue), settings.get('autoplay', False))
         )
         player.set_now_playing_message(message.chat.id, msg.id)
         import telecast.ui.progress as ui_progress_updater

@@ -14,6 +14,8 @@ from telecast.utils.auto_join import auto_join_handler
 from telecast.core.errors import FloodWaitError, TelegramServerError, StreamOperationTimeout
 from telecast.core.logging import logger
 from telecast.utils.monitor import monitor_logger
+from telecast.ui.keyboards import keyboards
+from telecast.ui.messages import messages
 import telecast.ui.title as ui_title_updater
 import telecast.ui.progress as ui_progress_updater
 
@@ -29,7 +31,9 @@ class PlayerController:
         self.pause_start_time: Dict[int, float] = {}
         self.total_paused_duration: Dict[int, float] = {}
         self._play_locks: Dict[int, asyncio.Lock] = {}
+        self._play_lock_owners: Dict[int, asyncio.Task] = {}
         self._prefetch_tasks: Dict[int, asyncio.Task] = {}
+        self._autoplay_prompts: Dict[int, Dict] = {}
 
         self.tgcalls.set_stream_end_callback(self._on_stream_end)
         self.tgcalls.set_vc_closed_callback(self._on_vc_closed)
@@ -61,15 +65,19 @@ class PlayerController:
         self.pause_start_time.pop(chat_id, None)
         self.total_paused_duration.pop(chat_id, None)
         self._cancel_prefetch(chat_id)
+        self._cancel_autoplay_prompt(chat_id)
 
         if not self.bot_client:
             return
 
         parse_mode = None
+        fallback_msg = None
         if reason == "kicked":
             msg = "Music assistant removed from voice chat. Playback stopped."
         elif reason == "empty":
-            msg = "👋 **Music assistant left the voice chat** — no one was listening."
+            msg = '<emoji id="5319007286004299794">👋</emoji> <b>Music assistant left the voice chat</b> — no one was listening.'
+            parse_mode = ParseMode.HTML
+            fallback_msg = "👋 <b>Music assistant left the voice chat</b> — no one was listening."
         elif actor:
             name = html.escape(actor.get('name') or 'an admin')
             uid = actor.get('id')
@@ -83,6 +91,12 @@ class PlayerController:
         try:
             await self.bot_client.send_message(chat_id, msg, parse_mode=parse_mode)
         except Exception as e:
+            if fallback_msg:
+                try:
+                    await self.bot_client.send_message(chat_id, fallback_msg, parse_mode=parse_mode)
+                    return
+                except Exception as e2:
+                    e = e2
             logger.error(f"Failed to send VC terminated message in {chat_id}: {e}")
 
     async def _on_vc_empty(self, chat_id: int):
@@ -91,10 +105,24 @@ class PlayerController:
 
     async def play(self, chat_id: int, track: Dict):
         lock = self._play_locks.setdefault(chat_id, asyncio.Lock())
-        async with lock:
+        task = asyncio.current_task()
+
+        if self._play_lock_owners.get(chat_id) is task:
+            # A failed track calls back into play_next -> play from inside this task.
+            # asyncio.Lock is not reentrant, so waiting on it here would hang forever.
             await self._play_inner(chat_id, track)
+            return
+
+        async with lock:
+            self._play_lock_owners[chat_id] = task
+            try:
+                await self._play_inner(chat_id, track)
+            finally:
+                self._play_lock_owners.pop(chat_id, None)
 
     async def _play_inner(self, chat_id: int, track: Dict):
+        self._cancel_autoplay_prompt(chat_id)
+
         settings = await db.get_chat_settings(chat_id)
         is_video = settings.get('mode') == 'video'
         quality = settings.get('quality', '720p')
@@ -126,22 +154,15 @@ class PlayerController:
                 if not join_success:
                     logger.error(f"Failed to add user client to chat {chat_id}: {join_error}")
                     if join_error:
-                        msg_id = self.now_playing_messages.get(chat_id)
-                        if msg_id:
-                            try:
-                                await self.bot_client.edit_message_text(chat_id=chat_id, message_id=msg_id, text=join_error)
-                            except Exception:
-                                await self.bot_client.send_message(chat_id, join_error)
-                        else:
-                            await self.bot_client.send_message(chat_id, join_error)
+                        await self._notify_join_failure(chat_id, join_error)
                     try:
                         chat_info = await self.bot_client.get_chat(chat_id)
                         chat_title = chat_info.title if hasattr(chat_info, 'title') else str(chat_id)
                         await monitor_logger.log_error("User Client Join Failed", chat_id, chat_title, join_error)
                     except Exception as log_error:
                         logger.error(f"Failed to log error: {log_error}")
-                    if join_error and "banned" in join_error.lower():
-                        logger.warning(f"User client is banned in {chat_id}, stopping all playback")
+                    if auto_join_handler.is_blocking_error(join_error):
+                        logger.warning(f"Assistant cannot join {chat_id} until an admin acts, stopping all playback")
                         await queue_manager.clear_queue(chat_id)
                         await self.stop(chat_id)
                         return
@@ -158,22 +179,15 @@ class PlayerController:
                 if not join_success:
                     logger.error(f"Failed to add user client to chat {chat_id}: {join_error}")
                     if join_error:
-                        msg_id = self.now_playing_messages.get(chat_id)
-                        if msg_id:
-                            try:
-                                await self.bot_client.edit_message_text(chat_id=chat_id, message_id=msg_id, text=join_error)
-                            except Exception:
-                                await self.bot_client.send_message(chat_id, join_error)
-                        else:
-                            await self.bot_client.send_message(chat_id, join_error)
+                        await self._notify_join_failure(chat_id, join_error)
                     try:
                         chat_info = await self.bot_client.get_chat(chat_id)
                         chat_title = chat_info.title if hasattr(chat_info, 'title') else str(chat_id)
                         await monitor_logger.log_error("User Client Join Failed", chat_id, chat_title, join_error)
                     except Exception as log_error:
                         logger.error(f"Failed to log error: {log_error}")
-                    if join_error and "banned" in join_error.lower():
-                        logger.warning(f"User client is banned in {chat_id}, stopping all playback")
+                    if auto_join_handler.is_blocking_error(join_error):
+                        logger.warning(f"Assistant cannot join {chat_id} until an admin acts, stopping all playback")
                         await queue_manager.clear_queue(chat_id)
                         await self.stop(chat_id)
                         return
@@ -267,7 +281,7 @@ class PlayerController:
 
                 song_title = track.get('title', 'Unknown')
                 duration = track.get('duration', 0)
-                await db.track_song_play(chat_id, requested_by_id, requested_by, song_title, duration)
+                await db.track_song_play(chat_id, requested_by_id, requested_by, song_title, duration, track.get('thumbnail', ''))
             except Exception as e:
                 logger.error(f"Failed to log song played: {e}")
 
@@ -291,7 +305,7 @@ class PlayerController:
                     initial_position = int(track.get('seek_position', 0))
                     initial_duration = int(track.get('duration', 0))
                     new_text = messages.now_playing(track, track.get('requested_by', 'Unknown'), initial_position, queue, playlist_unfetched)
-                    new_markup = keyboards.player_controls(chat_id, False, initial_position, initial_duration, track.get('is_live', False), loop_mode)
+                    new_markup = keyboards.player_controls(chat_id, False, initial_position, initial_duration, track.get('is_live', False), loop_mode, len(queue), settings.get('autoplay', False))
 
                     new_msg = await bot_client.send_message(
                         chat_id=chat_id,
@@ -506,6 +520,33 @@ class PlayerController:
             logger.error(f"Failed to resume in {chat_id}: {e}")
             return False
 
+    async def _notify_join_failure(self, chat_id: int, join_error: str):
+        """Show why the assistant couldn't join; rich version when available, markdown text as the fallback."""
+        msg_id = self.now_playing_messages.get(chat_id)
+        rich = getattr(join_error, 'rich_message', None)
+        markup = getattr(join_error, 'reply_markup', None)
+
+        if rich is not None:
+            try:
+                if msg_id:
+                    try:
+                        await self.bot_client.edit_message_text(chat_id=chat_id, message_id=msg_id, rich_message=rich, reply_markup=markup)
+                        return
+                    except Exception as edit_error:
+                        logger.debug(f"Rich edit of message {msg_id} failed in {chat_id}: {edit_error}")
+                await self.bot_client.send_rich_message(chat_id, rich, reply_markup=markup)
+                return
+            except Exception as rich_error:
+                logger.warning(f"Rich join notice failed in {chat_id}, using plain text: {rich_error}")
+
+        if msg_id:
+            try:
+                await self.bot_client.edit_message_text(chat_id=chat_id, message_id=msg_id, text=str(join_error), reply_markup=markup)
+                return
+            except Exception:
+                pass
+        await self.bot_client.send_message(chat_id, str(join_error), reply_markup=markup)
+
     async def stop(self, chat_id: int) -> bool:
         old_file = self.current_playing.get(chat_id, {}).get('file_path')
         try:
@@ -536,6 +577,7 @@ class PlayerController:
             self.pause_start_time.pop(chat_id, None)
             self.total_paused_duration.pop(chat_id, None)
             self._cancel_prefetch(chat_id)
+            self._cancel_autoplay_prompt(chat_id)
 
             if chat_id in self.now_playing_messages:
                 del self.now_playing_messages[chat_id]
@@ -635,7 +677,7 @@ class PlayerController:
                     logger.info(f"Queue ended, stopping playback in {chat_id}")
                     await self.stop(chat_id)
             else:
-                if settings.get('autoplay'):
+                if settings.get('autoplay', False):
                     await self._autoplay(chat_id)
                 else:
                     logger.info(f"Queue ended, stopping playback in {chat_id}")
@@ -866,8 +908,164 @@ class PlayerController:
         except Exception as e:
             logger.debug(f"Prefetch for {chat_id} failed: {e}")
 
+    def _cancel_autoplay_prompt(self, chat_id: int):
+        pending = self._autoplay_prompts.pop(chat_id, None)
+        task = (pending or {}).get('task')
+        if task and not task.done():
+            task.cancel()
+
+    def has_pending_autoplay(self, chat_id: int) -> bool:
+        return chat_id in self._autoplay_prompts
+
+    async def _edit_autoplay_message(self, chat_id: int, message_id: Optional[int], text: str):
+        if not message_id or not self.bot_client:
+            return
+        try:
+            await self.bot_client.edit_message_text(
+                chat_id=chat_id, message_id=message_id, text=text
+            )
+        except Exception as e:
+            logger.debug(f"Failed to edit autoplay message in {chat_id}: {e}")
+
+    async def _edit_autoplay_rich(self, chat_id: int, message_id: Optional[int], variants, fallback_text: str, reply_markup=None):
+        """Edit the autoplay message into a rich one; plain text if Telegram refuses every variant."""
+        if not message_id or not self.bot_client:
+            return
+        for rich in variants:
+            try:
+                await self.bot_client.edit_message_text(
+                    chat_id=chat_id, message_id=message_id, rich_message=rich, reply_markup=reply_markup
+                )
+                return
+            except Exception as e:
+                logger.warning(f"Rich autoplay edit failed in {chat_id}: {e}")
+        try:
+            await self.bot_client.edit_message_text(
+                chat_id=chat_id, message_id=message_id, text=fallback_text, reply_markup=reply_markup
+            )
+        except Exception as e:
+            logger.debug(f"Failed to edit autoplay message in {chat_id}: {e}")
+
     async def _autoplay(self, chat_id: int):
-        logger.info(f"Autoplay not yet implemented for {chat_id}")
+        if self.has_pending_autoplay(chat_id):
+            logger.info(f"Autoplay prompt already pending in {chat_id}, not asking again")
+            return
+
+        seed = self.current_playing.get(chat_id)
+        seed_title = (seed or {}).get('title', 'Unknown')
+
+        if not self.bot_client or not downloader.track_video_id(seed):
+            logger.info(f"Queue ended in {chat_id}, no YouTube track to build autoplay from")
+            await queue_manager.clear_queue(chat_id)
+            await self.stop(chat_id)
+            return
+
+        logger.info(f"Queue ended in {chat_id}, asking whether to autoplay from {seed_title!r}")
+        try:
+            markup = keyboards.autoplay_prompt(chat_id)
+            prompt = None
+            for rich in (messages.autoplay_prompt_rich(seed_title, True), messages.autoplay_prompt_rich(seed_title, False)):
+                try:
+                    prompt = await self.bot_client.send_rich_message(chat_id, rich, reply_markup=markup)
+                    break
+                except Exception as e:
+                    logger.warning(f"Rich autoplay prompt failed in {chat_id}: {e}")
+            if prompt is None:
+                prompt = await self.bot_client.send_message(
+                    chat_id, messages.autoplay_prompt(seed_title), reply_markup=markup
+                )
+        except Exception as e:
+            logger.error(f"Failed to send autoplay prompt in {chat_id}: {e}")
+            await queue_manager.clear_queue(chat_id)
+            await self.stop(chat_id)
+            return
+
+        try:
+            task = asyncio.create_task(self._autoplay_timeout(chat_id, prompt.id))
+        except RuntimeError:
+            task = None
+
+        self._autoplay_prompts[chat_id] = {
+            'message_id': prompt.id,
+            'seed_title': seed_title,
+            'task': task,
+        }
+
+    async def _autoplay_timeout(self, chat_id: int, message_id: int):
+        try:
+            await asyncio.sleep(Config.AUTOPLAY_PROMPT_TIMEOUT)
+
+            pending = self._autoplay_prompts.get(chat_id)
+            if not pending or pending.get('message_id') != message_id:
+                return
+
+            self._autoplay_prompts.pop(chat_id, None)
+            logger.info(f"Autoplay prompt in {chat_id} expired after {Config.AUTOPLAY_PROMPT_TIMEOUT}s")
+
+            await self._edit_autoplay_message(chat_id, message_id, messages.autoplay_expired())
+            await queue_manager.clear_queue(chat_id)
+            await self.stop(chat_id)
+        except asyncio.CancelledError:
+            pass
+
+    async def start_autoplay(self, chat_id: int, requested_by: str = "Unknown", requested_by_id: int = 0) -> bool:
+        pending = self._autoplay_prompts.pop(chat_id, None)
+        task = (pending or {}).get('task')
+        if task and not task.done():
+            task.cancel()
+
+        message_id = (pending or {}).get('message_id')
+        seed = self.current_playing.get(chat_id)
+        seed_title = (pending or {}).get('seed_title') or (seed or {}).get('title', 'Unknown')
+
+        if not seed:
+            logger.warning(f"Autoplay allowed in {chat_id} but the seed track is gone")
+            await self._edit_autoplay_message(chat_id, message_id, messages.autoplay_unavailable())
+            await queue_manager.clear_queue(chat_id)
+            await self.stop(chat_id)
+            return False
+
+        await self._edit_autoplay_message(chat_id, message_id, messages.autoplay_searching())
+
+        tracks = await downloader.get_related_tracks(seed, limit=Config.AUTOPLAY_BATCH_SIZE)
+
+        if not tracks:
+            logger.info(f"No related tracks found for {chat_id}, stopping playback")
+            await self._edit_autoplay_message(chat_id, message_id, messages.autoplay_unavailable())
+            await queue_manager.clear_queue(chat_id)
+            await self.stop(chat_id)
+            return False
+
+        for track in tracks:
+            track['requested_by'] = requested_by
+            track['requested_by_id'] = requested_by_id
+            await queue_manager.add_track(chat_id, track)
+
+        logger.info(f"Autoplay queued {len(tracks)} related track(s) in {chat_id} from {seed_title!r}")
+        await self._edit_autoplay_rich(
+            chat_id, message_id,
+            (
+                messages.autoplay_queued_rich(len(tracks), seed_title, True),
+                messages.autoplay_queued_rich(len(tracks), seed_title, False),
+            ),
+            messages.autoplay_queued(len(tracks), seed_title),
+            reply_markup=keyboards.close_only(chat_id),
+        )
+        await self.play(chat_id, tracks[0])
+        return True
+
+    async def decline_autoplay(self, chat_id: int) -> bool:
+        pending = self._autoplay_prompts.pop(chat_id, None)
+        if not pending:
+            return False
+
+        task = pending.get('task')
+        if task and not task.done():
+            task.cancel()
+
+        await self._edit_autoplay_message(chat_id, pending.get('message_id'), messages.autoplay_declined())
+        await queue_manager.clear_queue(chat_id)
         await self.stop(chat_id)
+        return True
 
 player_controller = None

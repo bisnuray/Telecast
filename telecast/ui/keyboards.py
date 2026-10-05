@@ -1,6 +1,6 @@
 # Copyright (C) @itsSmartDev
 
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, DisabledButton
 from pyrogram.enums import ButtonStyle
 
 class Keyboards:
@@ -33,8 +33,14 @@ class Keyboards:
         return bar
 
     @staticmethod
-    def player_controls(chat_id: int, is_paused: bool = False, current_time: int = 0, total_time: int = 0, is_live: bool = False, loop_mode: str = 'off'):
+    def player_controls(chat_id: int, is_paused: bool = False, current_time: int = 0, total_time: int = 0, is_live: bool = False, loop_mode: str = 'off', queue_length: int = None, autoplay: bool = False):
         buttons = []
+        off = DisabledButton()
+        can_rewind = not is_live and current_time > 0
+        can_seek = not is_live
+        can_replay = not is_live and current_time > 0
+        can_shuffle = queue_length is None or queue_length >= 3
+        can_skip = queue_length is None or queue_length > 1 or loop_mode != 'off' or autoplay
 
         if is_live:
             progress_text = "🔴 LIVE"
@@ -55,7 +61,8 @@ class Keyboards:
                 "Rewind",
                 callback_data=f"rewind_{chat_id}",
                 icon_custom_emoji_id=6109582886841622728,
-                style=ButtonStyle.PRIMARY
+                style=ButtonStyle.PRIMARY,
+                disabled=None if can_rewind else off
             ),
             InlineKeyboardButton(
                 "Resume" if is_paused else "Pause",
@@ -67,7 +74,8 @@ class Keyboards:
                 "Seek",
                 callback_data=f"seek_{chat_id}",
                 icon_custom_emoji_id=6111648078916229446,
-                style=ButtonStyle.PRIMARY
+                style=ButtonStyle.PRIMARY,
+                disabled=None if can_seek else off
             ),
         ])
 
@@ -76,19 +84,22 @@ class Keyboards:
                 "Shuffle",
                 callback_data=f"shuffle_{chat_id}",
                 icon_custom_emoji_id=6111735305407045958,
-                style=ButtonStyle.PRIMARY
+                style=ButtonStyle.PRIMARY,
+                disabled=None if can_shuffle else off
             ),
             InlineKeyboardButton(
                 "Skip",
                 callback_data=f"skip_{chat_id}",
                 icon_custom_emoji_id=6111707078881975618,
-                style=ButtonStyle.PRIMARY
+                style=ButtonStyle.PRIMARY,
+                disabled=None if can_skip else off
             ),
             InlineKeyboardButton(
                 "Replay",
                 callback_data=f"replay_{chat_id}",
                 icon_custom_emoji_id=6111871004898762419,
-                style=ButtonStyle.PRIMARY
+                style=ButtonStyle.PRIMARY,
+                disabled=None if can_replay else off
             ),
         ])
 
@@ -96,21 +107,21 @@ class Keyboards:
 
         buttons.append([
             InlineKeyboardButton(
-                "Volume",
+                "Sound",
                 callback_data=f"volume_{chat_id}",
                 icon_custom_emoji_id=6111869312681647237,
+                style=ButtonStyle.PRIMARY
+            ),
+            InlineKeyboardButton(
+                "Download",
+                callback_data=f"download_{chat_id}",
+                icon_custom_emoji_id=5258336354642697821,
                 style=ButtonStyle.PRIMARY
             ),
             InlineKeyboardButton(
                 repeat_text,
                 callback_data=f"toggle_repeat_{chat_id}",
                 icon_custom_emoji_id=6111715363873889673,
-                style=ButtonStyle.PRIMARY
-            ),
-            InlineKeyboardButton(
-                "Effects",
-                callback_data=f"effects_{chat_id}",
-                icon_custom_emoji_id=5890925363067886150,
                 style=ButtonStyle.PRIMARY
             ),
         ])
@@ -157,7 +168,7 @@ class Keyboards:
         ])
 
         buttons.append([
-            InlineKeyboardButton("⬅️ Back", callback_data=f"back_{chat_id}")
+            InlineKeyboardButton("⬅️ Back", callback_data=f"volume_{chat_id}")
         ])
 
         return InlineKeyboardMarkup(buttons)
@@ -191,6 +202,26 @@ class Keyboards:
         return InlineKeyboardMarkup(buttons)
 
     @staticmethod
+    def autoplay_prompt(chat_id: int):
+        buttons = [
+            [
+                InlineKeyboardButton(
+                    "Play Related Songs",
+                    callback_data=f"autoplay_yes_{chat_id}",
+                    icon_custom_emoji_id=5334665104677941170,
+                    style=ButtonStyle.SUCCESS
+                ),
+                InlineKeyboardButton(
+                    "No Thanks",
+                    callback_data=f"autoplay_no_{chat_id}",
+                    icon_custom_emoji_id=6111874900434099692,
+                    style=ButtonStyle.DANGER
+                ),
+            ]
+        ]
+        return InlineKeyboardMarkup(buttons)
+
+    @staticmethod
     def settings_menu(chat_id: int, settings: dict):
         mode = settings.get('mode', 'audio')
         title_update = settings.get('title_update', False)
@@ -198,54 +229,71 @@ class Keyboards:
         shuffle_mode = settings.get('shuffle_mode', False)
         mention_requester = settings.get('mention_requester', True)
         playlist_permission = settings.get('playlist_permission', 'everyone')
+        autoplay = settings.get('autoplay', False)
+        autoplay_permission = settings.get('autoplay_permission', 'everyone')
+        vc_welcome = settings.get('vc_welcome', True)
 
         audio_quality = settings.get('audio_quality', 'high')
 
         mode_icon = "📹 Video" if mode == "video" else "📻 Audio"
         playlist_perm_icon = "👑 Admin Only" if playlist_permission == 'admin' else "🌐 Everyone"
+        autoplay_perm_icon = "👑 Admin Only" if autoplay_permission == 'admin' else "🌐 Everyone"
         audio_quality_icon = f"🎚 {audio_quality.capitalize()}"
 
+        def toggle(label: str, key: str, enabled: bool, off_text: str = "🚫 Disabled"):
+            # green = on, red = off; the label next to it stays neutral
+            return [
+                InlineKeyboardButton(label, callback_data=f"toggle_{key}_{chat_id}"),
+                InlineKeyboardButton(
+                    "✅ Enabled" if enabled else off_text,
+                    callback_data=f"toggle_{key}_{chat_id}",
+                    style=ButtonStyle.SUCCESS if enabled else ButtonStyle.DANGER,
+                ),
+            ]
+
+        def choice(label: str, value: str, callback: str):
+            # blue = pick one of several values
+            return [
+                InlineKeyboardButton(label, callback_data="noop", disabled=DisabledButton()),
+                InlineKeyboardButton(value, callback_data=callback, style=ButtonStyle.PRIMARY),
+            ]
+
         buttons = [
-            [
-                InlineKeyboardButton("🎮 Player Mode", callback_data=f"noop"),
-                InlineKeyboardButton(mode_icon, callback_data=f"toggle_mode_{chat_id}")
-            ],
+            choice("🎮 Player Mode", mode_icon, f"toggle_mode_{chat_id}"),
             [
                 InlineKeyboardButton("🎵 Audio Quality", callback_data=f"audioquality_{chat_id}"),
-                InlineKeyboardButton(audio_quality_icon, callback_data=f"audioquality_{chat_id}")
+                InlineKeyboardButton(audio_quality_icon, callback_data=f"audioquality_{chat_id}", style=ButtonStyle.PRIMARY),
             ],
+            toggle("👑 Admin Only", "admin", admin_only, off_text="🔒 Disabled"),
+            toggle("✏️ Edit Title", "title", title_update),
+            toggle("🔀 Shuffle Mode", "shuffle", shuffle_mode),
+            toggle("🔔 Mention Requester", "mention", mention_requester),
+            choice("📋 Playlist Loading", playlist_perm_icon, f"toggle_playlist_perm_{chat_id}"),
+            toggle("🎧 Autoplay", "autoplay", autoplay),
+            choice("🙋 Autoplay Permission", autoplay_perm_icon, f"toggle_autoplay_perm_{chat_id}"),
+            toggle("👋 VC Welcome", "vc_welcome", vc_welcome),
             [
-                InlineKeyboardButton("👑 Admin Only", callback_data=f"toggle_admin_{chat_id}"),
-                InlineKeyboardButton("✅ Enabled" if admin_only else "🔒 Disabled", callback_data=f"toggle_admin_{chat_id}")
+                InlineKeyboardButton(
+                    "Close",
+                    callback_data=f"close_{chat_id}",
+                    icon_custom_emoji_id=6111874900434099692,
+                    style=ButtonStyle.DANGER,
+                ),
             ],
-            [
-                InlineKeyboardButton("✏️ Edit Title", callback_data=f"toggle_title_{chat_id}"),
-                InlineKeyboardButton("✅ Enabled" if title_update else "🚫 Disabled", callback_data=f"toggle_title_{chat_id}")
-            ],
-            [
-                InlineKeyboardButton("🔀 Shuffle Mode", callback_data=f"toggle_shuffle_{chat_id}"),
-                InlineKeyboardButton("✅ Enabled" if shuffle_mode else "🚫 Disabled", callback_data=f"toggle_shuffle_{chat_id}")
-            ],
-            [
-                InlineKeyboardButton("🔔 Mention Requester", callback_data=f"toggle_mention_{chat_id}"),
-                InlineKeyboardButton("✅ Enabled" if mention_requester else "🚫 Disabled", callback_data=f"toggle_mention_{chat_id}")
-            ],
-            [
-                InlineKeyboardButton("📋 Playlist Loading", callback_data=f"noop"),
-                InlineKeyboardButton(playlist_perm_icon, callback_data=f"toggle_playlist_perm_{chat_id}")
-            ],
-            [InlineKeyboardButton("❌ Close", callback_data=f"close_{chat_id}")]
         ]
 
         return InlineKeyboardMarkup(buttons)
 
     @staticmethod
     def quality_menu(chat_id: int):
+        def option(text: str, value: str):
+            return [InlineKeyboardButton(text, callback_data=f"setquality_{value}_{chat_id}", style=ButtonStyle.PRIMARY)]
+
         buttons = [
-            [InlineKeyboardButton("1080p", callback_data=f"setquality_1080p_{chat_id}")],
-            [InlineKeyboardButton("720p", callback_data=f"setquality_720p_{chat_id}")],
-            [InlineKeyboardButton("480p", callback_data=f"setquality_480p_{chat_id}")],
-            [InlineKeyboardButton("360p", callback_data=f"setquality_360p_{chat_id}")],
+            option("1080p", "1080p"),
+            option("720p", "720p"),
+            option("480p", "480p"),
+            option("360p", "360p"),
             [InlineKeyboardButton("◀️ Back", callback_data=f"settings_{chat_id}")]
         ]
 
@@ -253,13 +301,18 @@ class Keyboards:
 
     @staticmethod
     def audio_quality_menu(chat_id: int, current: str = "high"):
-        def label(value, text):
-            return f"{'✅' if current == value else '⬜'} {text}"
+        def option(value, text):
+            selected = current == value
+            return [InlineKeyboardButton(
+                f"{'✅' if selected else '⬜'} {text}",
+                callback_data=f"setaudioquality_{value}_{chat_id}",
+                style=ButtonStyle.SUCCESS if selected else ButtonStyle.PRIMARY,
+            )]
         buttons = [
-            [InlineKeyboardButton(label("studio", "Studio (96kHz, stereo)"), callback_data=f"setaudioquality_studio_{chat_id}")],
-            [InlineKeyboardButton(label("high", "High (48kHz, stereo)"), callback_data=f"setaudioquality_high_{chat_id}")],
-            [InlineKeyboardButton(label("medium", "Medium (36kHz, mono)"), callback_data=f"setaudioquality_medium_{chat_id}")],
-            [InlineKeyboardButton(label("low", "Low (24kHz, mono)"), callback_data=f"setaudioquality_low_{chat_id}")],
+            option("studio", "Studio (96kHz, stereo)"),
+            option("high", "High (48kHz, stereo)"),
+            option("medium", "Medium (36kHz, mono)"),
+            option("low", "Low (24kHz, mono)"),
             [InlineKeyboardButton("◀️ Back", callback_data=f"settings_{chat_id}")]
         ]
 
@@ -292,7 +345,7 @@ class Keyboards:
         nav_row = []
         if page > 0:
             nav_row.append(InlineKeyboardButton("◀️", callback_data=f"qpage_{page-1}_{chat_id}"))
-        nav_row.append(InlineKeyboardButton(f"{page+1}/{total_pages}", callback_data="noop"))
+        nav_row.append(InlineKeyboardButton(f"{page+1}/{total_pages}", callback_data="noop", disabled=DisabledButton()))
         if page < total_pages - 1:
             nav_row.append(InlineKeyboardButton("▶️", callback_data=f"qpage_{page+1}_{chat_id}"))
 
@@ -339,6 +392,14 @@ class Keyboards:
                 InlineKeyboardButton("🔊 100%", callback_data=f"vol_100_{chat_id}"),
                 InlineKeyboardButton("🔊 200%", callback_data=f"vol_200_{chat_id}"),
             ],
+            [
+                InlineKeyboardButton(
+                    "Effects",
+                    callback_data=f"effects_{chat_id}",
+                    icon_custom_emoji_id=5890925363067886150,
+                    style=ButtonStyle.PRIMARY,
+                )
+            ],
             [InlineKeyboardButton("◀️ Back", callback_data=f"back_{chat_id}")]
         ]
 
@@ -367,6 +428,20 @@ class Keyboards:
         return InlineKeyboardMarkup(buttons)
 
     @staticmethod
+    def help_menu(active: str = None):
+        def tab(label: str, key: str):
+            return InlineKeyboardButton(
+                label,
+                callback_data=f"help_{key}",
+                style=ButtonStyle.SUCCESS if active == key else ButtonStyle.PRIMARY,
+            )
+
+        return InlineKeyboardMarkup([
+            [tab("Basic", "basic"), tab("Music", "music"), tab("Settings", "settings")],
+            [InlineKeyboardButton("◀️ Back", callback_data="back_to_start")],
+        ])
+
+    @staticmethod
     def logs_menu() -> InlineKeyboardMarkup:
         buttons = [
             [
@@ -375,6 +450,17 @@ class Keyboards:
             ]
         ]
         return InlineKeyboardMarkup(buttons)
+
+    @staticmethod
+    def close_only(chat_id: int) -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup([[
+            InlineKeyboardButton(
+                "Close",
+                callback_data=f"close_{chat_id}",
+                icon_custom_emoji_id=6111874900434099692,
+                style=ButtonStyle.DANGER,
+            ),
+        ]])
 
     @staticmethod
     def logs_close() -> InlineKeyboardMarkup:

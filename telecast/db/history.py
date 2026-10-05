@@ -17,7 +17,7 @@ class HistoryMixin:
             return stats.get("total_songs_played", 0)
         return 0
 
-    async def track_song_play(self, chat_id, user_id, user_name, song_title, duration=0):
+    async def track_song_play(self, chat_id, user_id, user_name, song_title, duration=0, thumbnail=""):
         from datetime import datetime
 
         play_data = {
@@ -26,6 +26,7 @@ class HistoryMixin:
             "user_name": user_name,
             "song_title": song_title,
             "duration": duration,
+            "thumbnail": thumbnail or "",
             "played_at": datetime.utcnow()
         }
 
@@ -54,7 +55,8 @@ class HistoryMixin:
             {"$match": {"chat_id": chat_id, "played_at": {"$gte": time_threshold}}},
             {"$group": {
                 "_id": "$song_title",
-                "count": {"$sum": 1}
+                "count": {"$sum": 1},
+                "thumb": {"$max": "$thumbnail"}
             }},
             {"$sort": {"count": -1}},
             {"$limit": 5}
@@ -104,7 +106,8 @@ class HistoryMixin:
         top_songs_pipeline = [
             {"$group": {
                 "_id": "$song_title",
-                "count": {"$sum": 1}
+                "count": {"$sum": 1},
+                "thumb": {"$max": "$thumbnail"}
             }},
             {"$sort": {"count": -1}},
             {"$limit": 5}

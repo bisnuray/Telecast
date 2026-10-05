@@ -13,6 +13,7 @@ from telecast.services.stream import TGCallsManager
 from telecast.services.player import PlayerController
 from telecast.ui.title import TitleUpdater
 from telecast.ui.progress import ProgressUpdater
+from telecast.ui.vc_messages import VCMessenger
 from telecast.handlers.commands import register_commands
 from telecast.handlers.callbacks import register_callbacks
 from telecast.handlers.broadcast import register_broadcast_handlers
@@ -30,6 +31,7 @@ class VCMusicBot:
         self.player_controller = None
         self.title_updater = None
         self.progress_updater = None
+        self.vc_messenger = None
         self.watchdog = None
         self.is_running = False
 
@@ -64,6 +66,9 @@ class VCMusicBot:
         self.title_updater = TitleUpdater(self.user_client)
 
         self.progress_updater = ProgressUpdater(self.bot, self.player_controller)
+
+        self.vc_messenger = VCMessenger(self.user_client)
+        self.tgcalls_manager.set_vc_join_callback(self.vc_messenger.welcome)
 
         import telecast.services.player as player_module
         player_module.player_controller = self.player_controller
