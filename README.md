@@ -6,11 +6,10 @@
 
 Stream YouTube tracks (or your own audio/video files) straight into a group voice chat — with a rich inline player, playlists, audio effects, live-call title updates, and per-group rankings.
 
-<a href="https://github.com/bisnuray/Telecast/stargazers"><img src="https://img.shields.io/github/stars/bisnuray/Telecast?color=blue&style=flat" alt="GitHub Repo stars"></a>
-<a href="https://github.com/bisnuray/Telecast/network/members"><img src="https://img.shields.io/github/forks/bisnuray/Telecast?style=flat" alt="GitHub forks"></a>
-<a href="https://github.com/bisnuray/Telecast/issues"><img src="https://img.shields.io/github/issues/bisnuray/Telecast" alt="GitHub issues"></a>
-<a href="https://github.com/bisnuray/Telecast/pulls"><img src="https://img.shields.io/github/issues-pr/bisnuray/Telecast" alt="GitHub pull requests"></a>
-<a href="https://github.com/bisnuray/Telecast/graphs/contributors"><img src="https://img.shields.io/github/contributors/bisnuray/Telecast?style=flat" alt="GitHub contributors"></a>
+<a href="https://codeberg.org/bisnuray/Telecast/stars"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fcodeberg.org%2Fapi%2Fv1%2Frepos%2Fbisnuray%2FTelecast&query=%24.stars_count&label=Stars&color=blue&style=flat" alt="Codeberg stars"></a>
+<a href="https://codeberg.org/bisnuray/Telecast/forks"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fcodeberg.org%2Fapi%2Fv1%2Frepos%2Fbisnuray%2FTelecast&query=%24.forks_count&label=Forks&style=flat" alt="Codeberg forks"></a>
+<a href="https://codeberg.org/bisnuray/Telecast/issues"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fcodeberg.org%2Fapi%2Fv1%2Frepos%2Fbisnuray%2FTelecast&query=%24.open_issues_count&label=Issues&style=flat" alt="Codeberg issues"></a>
+<a href="https://codeberg.org/bisnuray/Telecast/pulls"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fcodeberg.org%2Fapi%2Fv1%2Frepos%2Fbisnuray%2FTelecast&query=%24.open_pr_counter&label=Pull%20Requests&style=flat" alt="Codeberg pull requests"></a>
 <br>
 <img src="https://img.shields.io/badge/Python-3.11-blue" alt="Python 3.11">
 <img src="https://img.shields.io/badge/Database-MongoDB-green" alt="MongoDB">
