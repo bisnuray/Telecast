@@ -41,6 +41,9 @@ def _cache_metadata(url: str, metadata: Dict) -> None:
     _metadata_cache[url] = (metadata, now)
 
 
+_FALLBACK_CLIENT = 'mweb'
+
+
 class MediaDownloader:
     def __init__(self):
         self.cookies_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'cookies', 'yt.txt')
@@ -56,6 +59,7 @@ class MediaDownloader:
             'retries': 3,
             'fragment_retries': 3,
             'extractor_retries': 2,
+            'proxy': Config.YOUTUBE_PROXY,
         }
 
         if os.path.exists(self.cookies_path):
@@ -69,6 +73,21 @@ class MediaDownloader:
         if extra:
             opts.update(extra)
         return opts
+
+    async def _extract(self, url: str, opts: dict, download: bool):
+        def run(extract_opts):
+            with yt_dlp.YoutubeDL(extract_opts) as ydl:
+                return ydl.extract_info(url, download=download)
+
+        try:
+            return await self._run_sync(lambda: run(opts))
+        except yt_dlp.utils.DownloadError as e:
+            if 'unavailable' not in str(e).lower():
+                raise
+            logger.warning(f"Default clients failed for {url}, retrying with {_FALLBACK_CLIENT}")
+            retry_opts = dict(opts)
+            retry_opts['extractor_args'] = {'youtube': {'player_client': [_FALLBACK_CLIENT]}}
+            return await self._run_sync(lambda: run(retry_opts))
 
     def _run_sync(self, fn):
         loop = asyncio.get_running_loop()
@@ -118,8 +137,7 @@ class MediaDownloader:
         })
 
         try:
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = await self._run_sync(lambda: ydl.extract_info(url, download=False))
+            info = await self._extract(url, opts, download=False)
         except Exception as e:
             logger.error(f"Failed to get metadata for {url}: {e}")
             return None
@@ -166,8 +184,7 @@ class MediaDownloader:
                 'noplaylist': True,
             })
 
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                dl_info = await self._run_sync(lambda: ydl.extract_info(url, download=True))
+            dl_info = await self._extract(url, opts, download=True)
 
             if dl_info:
                 if isinstance(dl_info, list):
@@ -203,8 +220,7 @@ class MediaDownloader:
                 'noplaylist': True,
             })
 
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                dl_info = await self._run_sync(lambda: ydl.extract_info(url, download=True))
+            dl_info = await self._extract(url, opts, download=True)
 
             if dl_info:
                 if isinstance(dl_info, list):

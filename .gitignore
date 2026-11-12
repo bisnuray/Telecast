@@ -12,8 +12,10 @@ __pycache__/
 downloads/
 cache/
 logs/
+data/
 *.log
 unknown_errors.txt
+.restart_info.json
 
 # Local dev
 CLAUDE.md

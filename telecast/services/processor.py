@@ -32,27 +32,32 @@ class MediaProcessor:
             '-f', 'bestvideo+bestaudio/best' if is_video else 'bestaudio/best',
         ]
 
+        if Config.YOUTUBE_PROXY:
+            cmd.extend(['--proxy', Config.YOUTUBE_PROXY])
+
         if os.path.exists(cookies_path):
             cmd.extend(['--cookies', cookies_path])
             logger.info(f"Using cookies from {cookies_path} for stream URL extraction")
 
-        cmd.append(url)
-
         try:
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            stdout, stderr = await process.communicate()
+            stderr = b''
+            for extra in ([], ['--extractor-args', 'youtube:player_client=mweb']):
+                process = await asyncio.create_subprocess_exec(
+                    *cmd, *extra, url,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                stdout, stderr = await process.communicate()
 
-            if process.returncode == 0:
-                stream_url = stdout.decode().strip().split('\n')[0]
-                logger.info(f"Got stream URL for {url}")
-                return stream_url
-            else:
-                logger.error(f"yt-dlp error: {stderr.decode()}")
-                return None
+                if process.returncode == 0:
+                    stream_url = stdout.decode().strip().split('\n')[0]
+                    logger.info(f"Got stream URL for {url}")
+                    return stream_url
+                if b'unavailable' not in stderr.lower():
+                    break
+
+            logger.error(f"yt-dlp error: {stderr.decode()}")
+            return None
         except Exception as e:
             logger.error(f"Failed to get stream URL: {e}")
             return None

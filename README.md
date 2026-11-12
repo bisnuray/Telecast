@@ -1,15 +1,15 @@
 <div align="center">
 
-# 🎧 Telecast
+# Telecast
 
 **A Telegram voice-chat music & video bot.**
 
 Stream YouTube tracks (or your own audio/video files) straight into a group voice chat — with a rich inline player, playlists, audio effects, live-call title updates, and per-group rankings.
 
-<a href="https://codeberg.org/bisnuray/Telecast/stars"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fcodeberg.org%2Fapi%2Fv1%2Frepos%2Fbisnuray%2FTelecast&query=%24.stars_count&label=Stars&color=blue&style=flat" alt="Codeberg stars"></a>
-<a href="https://codeberg.org/bisnuray/Telecast/forks"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fcodeberg.org%2Fapi%2Fv1%2Frepos%2Fbisnuray%2FTelecast&query=%24.forks_count&label=Forks&style=flat" alt="Codeberg forks"></a>
-<a href="https://codeberg.org/bisnuray/Telecast/issues"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fcodeberg.org%2Fapi%2Fv1%2Frepos%2Fbisnuray%2FTelecast&query=%24.open_issues_count&label=Issues&style=flat" alt="Codeberg issues"></a>
-<a href="https://codeberg.org/bisnuray/Telecast/pulls"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fcodeberg.org%2Fapi%2Fv1%2Frepos%2Fbisnuray%2FTelecast&query=%24.open_pr_counter&label=Pull%20Requests&style=flat" alt="Codeberg pull requests"></a>
+<a href="https://github.com/bisnuray/Telecast/stargazers"><img src="https://img.shields.io/github/stars/bisnuray/Telecast?style=flat&color=blue" alt="GitHub stars"></a>
+<a href="https://github.com/bisnuray/Telecast/network/members"><img src="https://img.shields.io/github/forks/bisnuray/Telecast?style=flat" alt="GitHub forks"></a>
+<a href="https://github.com/bisnuray/Telecast/issues"><img src="https://img.shields.io/github/issues/bisnuray/Telecast?style=flat" alt="GitHub issues"></a>
+<a href="https://github.com/bisnuray/Telecast/pulls"><img src="https://img.shields.io/github/issues-pr/bisnuray/Telecast?style=flat" alt="GitHub pull requests"></a>
 <br>
 <img src="https://img.shields.io/badge/Python-3.11-blue" alt="Python 3.11">
 <img src="https://img.shields.io/badge/Database-MongoDB-green" alt="MongoDB">
@@ -20,9 +20,9 @@ Stream YouTube tracks (or your own audio/video files) straight into a group voic
 
 ---
 
-## 📑 Jump to
+## Jump to
 
-- [Features](#features) · [Requirements](#requirements) · [Quick start](#quick-start) · [Setup](#setup) · [Configuration](#configuration)
+- [Features](#features) · [Requirements](#requirements) · [Quick start](#quick-start) · [Docker](#docker) · [Setup](#setup) · [Configuration](#configuration)
 - [Commands](#commands) · [Audio effects](#effects) · [Settings](#settings) · [Rankings](#rankings)
 - [Troubleshooting](#troubleshooting) · [Known Issues](#known-issues) · [Contributing](#contributing) · [Support](#support) · [License](#license)
 
@@ -30,29 +30,31 @@ Stream YouTube tracks (or your own audio/video files) straight into a group voic
 
 <a id="features"></a>
 
-## ✨ Features
+## Features
 
-- 🎵 **Music & video streaming** — play YouTube audio *or* video into a voice chat.
-- 🎛 **Inline player** — pause / resume / skip / stop / seek / rewind / replay / volume, all from buttons.
-- 🎚 **Audio effects** — Bass Boost, Nightcore, Slowed, Lofi, 8D.
-- ⏩ **Playback speed** — from `0.5x` to `2.0x`.
-- 🔁 **Loop modes** — off / repeat-track / repeat-queue.
-- 📜 **Playlists** — load a whole YouTube playlist (lazy-fetched 10 tracks at a time), plus save / load / delete named playlists.
-- 🏆 **Rankings** — daily, weekly and global top-listeners, rendered as banner images.
-- 📎 **Telegram files** — reply to an audio/video file to queue it directly.
-- 🔴 **Live streams** — plays YouTube live streams.
-- 🔍 **Inline search** — type `@YourBot song name` in any chat to search YouTube.
-- 🎯 **Live call title** — updates the group call title to the currently playing track.
-- 👋 **Voice-chat welcome** — greets listeners inside the voice chat when they join.
-- 👥 **Multi-chat** — serves many groups at once.
-- 🛡 **Permissions** — group-admins plus a per-group "VC admin" system.
-- 📡 **Broadcast** — owner-only message broadcast to all users/groups.
+- **Music & video streaming** — play YouTube audio *or* video into a voice chat.
+- **Inline player** — pause / resume / skip / stop / seek / rewind / replay / volume, all from buttons.
+- **Audio effects** — Bass Boost, Nightcore, Slowed, Lofi, 8D.
+- **Playback speed** — from `0.5x` to `2.0x`.
+- **Loop modes** — off / repeat-track / repeat-queue.
+- **Playlists** — load a whole YouTube playlist (lazy-fetched 10 tracks at a time), plus save / load / delete named playlists.
+- **Rankings** — daily, weekly and global top-listeners, rendered as banner images.
+- **Telegram files** — reply to an audio/video file to queue it directly.
+- **Live streams** — plays YouTube live streams.
+- **Inline search** — type `@YourBot song name` in any chat to search YouTube.
+- **Live call title** — updates the group call title to the currently playing track.
+- **Voice-chat welcome** — greets listeners inside the voice chat when they join.
+- **Multi-chat** — serves many groups at once.
+- **Permissions** — group-admins plus a per-group "VC admin" system.
+- **Broadcast** — owner-only message broadcast to all users/groups.
 
 ---
 
 <a id="requirements"></a>
 
-## 📋 Requirements
+## Requirements
+
+With [Docker](#docker) you only need Docker and a MongoDB (or Atlas). The table below is for running **without Docker**.
 
 **Runtime (not installable via pip):**
 
@@ -72,10 +74,12 @@ Python packages are listed in [`requirements.txt`](requirements.txt) and install
 
 <a id="quick-start"></a>
 
-## 🚀 Quick start
+## Quick start
+
+The easiest way to run Telecast is with **Docker**. The image already includes Python 3.11, ffmpeg, the `yt-dlp` CLI and Deno, so the host only needs Docker.
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/bisnuray/Telecast.git
 cd Telecast
 
 # 1. Fill in your credentials
@@ -86,24 +90,54 @@ nano .env
 mkdir -p cookies
 # place your Netscape-format cookies at cookies/yt.txt
 
-# 3. Run (installs deps + yt-dlp + ffmpeg, then launches)
+# 3. Build and start
+docker compose up -d --build
+```
+
+---
+
+<a id="docker"></a>
+
+## Docker
+
+```bash
+docker compose up -d --build           # build and start
+docker compose logs -f telecast        # follow logs
+docker compose down                    # stop
+```
+
+- `cookies/` is mounted read-only, `logs/` is mounted so `logs/bot.log` stays on the host.
+- The bot's `.session` file is kept in the `telecast-data` volume, so it survives rebuilds.
+- After changing code, run `docker compose up -d --build` again.
+
+**Local MongoDB (optional):** if you don't use Atlas, start the bundled MongoDB too and set `MONGODB_URI=mongodb://mongo:27017/vcbot` in `.env`:
+
+```bash
+docker compose --profile mongo up -d --build
+```
+
+### Without Docker
+
+Install the [requirements](#requirements) yourself, or let `run.sh` do it. It installs/upgrades the Python dependencies, `yt-dlp`, Deno and `ffmpeg` if missing, then starts the bot:
+
+```bash
 ./run.sh
 ```
 
-That's it. `run.sh` is idempotent — it installs/upgrades Python dependencies, `yt-dlp`, and `ffmpeg` if missing, then starts the bot.
-
-To run without `run.sh`:
+Or manually:
 
 ```bash
 pip install -r requirements.txt
 python3.11 bot.py
 ```
 
+> Don't run the Docker container and the bot without Docker at the same time — both would use the same bot token.
+
 ---
 
 <a id="setup"></a>
 
-## 🔐 Setup in detail
+## Setup in detail
 
 ### 1. Get your API credentials
 
@@ -141,17 +175,17 @@ YouTube may block downloads from datacenter IPs ("Sign in to confirm you're not 
 
 <a id="configuration"></a>
 
-## ⚙️ Configuration
+## Configuration
 
 All configuration lives in `.env` (see [`.env.example`](.env.example)).
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `API_ID` | ✅ | — | Telegram app ID |
-| `API_HASH` | ✅ | — | Telegram app hash |
-| `BOT_TOKEN` | ✅ | — | Bot token from BotFather |
-| `SESSION_STRING` | ✅ | — | User-account string session |
-| `MONGODB_URI` | ✅ | `mongodb://localhost:27017/vcbot` | MongoDB connection URI |
+| `API_ID` | Yes | — | Telegram app ID |
+| `API_HASH` | Yes | — | Telegram app hash |
+| `BOT_TOKEN` | Yes | — | Bot token from BotFather |
+| `SESSION_STRING` | Yes | — | User-account string session |
+| `MONGODB_URI` | Yes | `mongodb://localhost:27017/vcbot` | MongoDB connection URI |
 | `LOG_LEVEL` | — | `INFO` | Logging level |
 | `LOG_CHAT_ID` | — | `0` | Chat ID to receive log notifications |
 | `MAX_QUEUE_SIZE` | — | `100` | Max tracks per queue |
@@ -160,6 +194,10 @@ All configuration lives in `.env` (see [`.env.example`](.env.example)).
 | `MAX_TRACK_DURATION` | — | `7200` | Max track length (seconds) |
 | `AUTOPLAY_BATCH_SIZE` | — | `5` | Related tracks queued when autoplay is allowed |
 | `AUTOPLAY_PROMPT_TIMEOUT` | — | `90` | Seconds to wait for an answer to the autoplay prompt |
+| `CACHE_CHAT_ID` | — | `0` | Channel used to cache uploaded audio by `file_id` |
+| `PREFETCH_ENABLED` | — | `true` | Pre-download the next track while the current one plays |
+| `YOUTUBE_PROXY` | — | — | Proxy for yt-dlp, search and live streams (`http://user:pass@host:port`) |
+| `SESSION_DIR` | — | `.` | Folder for the bot's `.session` file (`/app/data` in Docker) |
 
 > **Note:** `BOT_OWNER_ID` (used for `/restart`, `/broadcast`, and `/logs`) is **hardcoded** in `telecast/core/config.py`. Change it to your own Telegram user ID before deploying.
 
@@ -167,7 +205,7 @@ All configuration lives in `.env` (see [`.env.example`](.env.example)).
 
 <a id="commands"></a>
 
-## 🎮 Commands
+## Commands
 
 Commands work with both `/` and `.` prefixes (e.g. `/play` or `.play`). Most work only in groups where the bot is present.
 
@@ -210,7 +248,7 @@ The now-playing message includes a full control bar:
 
 <a id="effects"></a>
 
-## 🎚 Audio effects & speed
+## Audio effects & speed
 
 | Effect | Button |
 | --- | --- |
@@ -227,7 +265,7 @@ Playback speed presets: `0.5x`, `0.75x`, `1.0x`, `1.25x`, `1.5x`, `2.0x`.
 
 <a id="settings"></a>
 
-## ⚙️ Settings
+## Settings
 
 Open with `/settings` (admin). Available toggles:
 
@@ -267,7 +305,7 @@ was a YouTube one; tracks longer than `MAX_TRACK_DURATION` are skipped.
 
 <a id="vc-welcome"></a>
 
-## 👋 Voice-chat welcome
+## Voice-chat welcome
 
 When someone joins the voice chat while music is playing, the assistant posts a short
 greeting **inside the call** — the text bubble that appears over the voice chat:
@@ -292,7 +330,7 @@ Two things to know:
 
 <a id="rankings"></a>
 
-## 🏆 Rankings
+## Rankings
 
 `/rank` renders a banner image of top listeners.
 
@@ -305,7 +343,7 @@ Switch between them using the inline buttons on the ranking message.
 
 <a id="troubleshooting"></a>
 
-## ❓ Troubleshooting
+## Troubleshooting
 
 | Problem | Fix |
 | --- | --- |
@@ -320,7 +358,7 @@ Switch between them using the inline buttons on the ranking message.
 
 <a id="known-issues"></a>
 
-## 🐛 Known Issues
+## Known Issues
 
 ### Bot doesn't leave the voice chat when an audio effect is applied
 
@@ -332,7 +370,7 @@ The effect runs through an FFmpeg filter chain that can block the end-of-stream 
 
 <a id="contributing"></a>
 
-## 🤝 Contributing
+## Contributing
 
 Contributions are welcome!
 
@@ -348,7 +386,7 @@ Don't commit secrets — `.env`, `*.session*`, and `cookies/yt.txt` are gitignor
 
 <a id="support"></a>
 
-## 💬 Support
+## Support
 
 - **Update channel:** [@itsSmartDev](https://t.me/itsSmartDev)
 - **Discussion chat:** [@DevChatZone](https://t.me/DevChatZone)
@@ -357,7 +395,7 @@ Don't commit secrets — `.env`, `*.session*`, and `cookies/yt.txt` are gitignor
 
 <a id="license"></a>
 
-## 📄 License & credits
+## License & credits
 
 This project is licensed under the **[MIT License](LICENSE)**. You are free to use, copy, modify, merge, publish, distribute, sublicense, and/or sell the software, provided the copyright notice above is included in all copies or substantial portions.
 
@@ -367,6 +405,6 @@ Built with [Pyrogram](https://github.com/pyrogram/pyrogram) (via the *kurigram* 
 
 ---
 
-## Ethical Notice 🔔
+## Ethical Notice
 
 > **Ethics Reminder:** Simply modifying a few lines of code does not constitute original authorship. When forking a project, always fork responsibly and give proper credit to the original creators.

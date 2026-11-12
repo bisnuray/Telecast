@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 
 import aiohttp
 
+from telecast.core.config import Config
 from telecast.core.logging import logger
 
 _API_KEY = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
@@ -209,7 +210,7 @@ class YouTubeSearch:
         started = time.monotonic()
         try:
             session = await self._get_session()
-            async with session.post(_ENDPOINT, json=payload) as resp:
+            async with session.post(_ENDPOINT, json=payload, proxy=Config.YOUTUBE_PROXY) as resp:
                 if resp.status != 200:
                     logger.warning(
                         f"InnerTube search returned HTTP {resp.status} for {query!r}"
@@ -263,7 +264,7 @@ class YouTubeSearch:
         started = time.monotonic()
         try:
             session = await self._get_session()
-            async with session.post(_ENDPOINT_NEXT, json=payload) as resp:
+            async with session.post(_ENDPOINT_NEXT, json=payload, proxy=Config.YOUTUBE_PROXY) as resp:
                 if resp.status != 200:
                     logger.warning(
                         f"InnerTube next returned HTTP {resp.status} for {video_id}"

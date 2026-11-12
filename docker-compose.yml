@@ -1,0 +1,24 @@
+services:
+  telecast:
+    build: .
+    image: telecast:latest
+    container_name: telecast
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./cookies:/app/cookies:ro
+      - ./logs:/app/logs
+      - telecast-data:/app/data
+    stop_grace_period: 20s
+
+  mongo:
+    image: mongo:7
+    container_name: telecast-mongo
+    restart: unless-stopped
+    profiles: ["mongo"]
+    volumes:
+      - mongo-data:/data/db
+
+volumes:
+  telecast-data:
+  mongo-data:

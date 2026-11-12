@@ -6,6 +6,7 @@ from typing import Dict, Optional, Callable, Set
 from pytgcalls import PyTgCalls
 from pytgcalls.types import MediaStream, AudioQuality, VideoQuality
 from pytgcalls.types.raw import VideoParameters
+from telecast.core.config import Config
 from telecast.core.logging import logger
 from telecast.services.effects import build_ffmpeg_parameters
 from telecast.core.errors import StreamOperationTimeout, FloodWaitError, TelegramServerError
@@ -450,6 +451,10 @@ class TGCallsManager:
         try:
             ffmpeg_params = build_ffmpeg_parameters(audio_effect, speed, seek_position)
             audio_params = AUDIO_QUALITY_MAP.get((audio_quality or "high").lower(), AudioQuality.HIGH)
+
+            if Config.YOUTUBE_PROXY and str(path).startswith(("http://", "https://")):
+                proxy_param = f"-http_proxy {Config.YOUTUBE_PROXY}"
+                ffmpeg_params = f"{proxy_param} {ffmpeg_params}" if ffmpeg_params else proxy_param
 
             common = {"audio_parameters": audio_params}
             if ffmpeg_params:

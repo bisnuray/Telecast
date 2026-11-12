@@ -48,6 +48,7 @@ class VCMusicBot:
             api_id=Config.API_ID,
             api_hash=Config.API_HASH,
             bot_token=Config.BOT_TOKEN,
+            workdir=Config.SESSION_DIR,
             parse_mode=ParseMode.MARKDOWN
         )
 

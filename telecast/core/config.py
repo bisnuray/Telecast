@@ -21,9 +21,12 @@ class Config:
     MAX_PLAYLIST_TRACKS = int(os.getenv("MAX_PLAYLIST_TRACKS", "50"))
     MAX_TRACK_DURATION = int(os.getenv("MAX_TRACK_DURATION", "7200"))
 
+    YOUTUBE_PROXY = os.getenv("YOUTUBE_PROXY", "").strip() or None
+
     CACHE_DIR = "cache"
     DOWNLOADS_DIR = "downloads"
     LOGS_DIR = "logs"
+    SESSION_DIR = os.getenv("SESSION_DIR", ".")
 
     PREFETCH_ENABLED = os.getenv("PREFETCH_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 
@@ -52,3 +55,4 @@ class Config:
         os.makedirs(cls.CACHE_DIR, exist_ok=True)
         os.makedirs(cls.DOWNLOADS_DIR, exist_ok=True)
         os.makedirs(cls.LOGS_DIR, exist_ok=True)
+        os.makedirs(cls.SESSION_DIR, exist_ok=True)
