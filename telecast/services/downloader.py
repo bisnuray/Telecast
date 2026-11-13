@@ -10,6 +10,7 @@ from typing import Dict, List, Optional
 from telecast.core.config import Config
 from telecast.core.logging import logger
 from telecast.services.yt_search import youtube_search
+from telecast.services.cookies import get_cookies_path
 
 _executor = ThreadPoolExecutor(max_workers=4)
 
@@ -46,7 +47,7 @@ _FALLBACK_CLIENT = 'mweb'
 
 class MediaDownloader:
     def __init__(self):
-        self.cookies_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'cookies', 'yt.txt')
+        self.cookies_path = get_cookies_path()
 
         self._base_opts = {
             'quiet': True,
@@ -62,11 +63,9 @@ class MediaDownloader:
             'proxy': Config.YOUTUBE_PROXY,
         }
 
-        if os.path.exists(self.cookies_path):
+        if self.cookies_path:
             self._base_opts['cookiefile'] = self.cookies_path
             logger.info(f"YouTube cookies loaded from: {self.cookies_path}")
-        else:
-            logger.warning(f"YouTube cookies file not found at: {self.cookies_path}")
 
     def _make_opts(self, extra: dict = None) -> dict:
         opts = self._base_opts.copy()
