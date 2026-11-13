@@ -5,6 +5,7 @@ import os
 from typing import Optional
 from telecast.core.config import Config
 from telecast.core.logging import logger
+from telecast.services.cookies import get_cookies_path
 
 class MediaProcessor:
     @staticmethod
@@ -24,7 +25,7 @@ class MediaProcessor:
 
     @staticmethod
     async def get_stream_url(url: str, is_video: bool = False) -> Optional[str]:
-        cookies_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'cookies', 'yt.txt')
+        cookies_path = get_cookies_path()
 
         cmd = [
             'yt-dlp',
@@ -35,7 +36,7 @@ class MediaProcessor:
         if Config.YOUTUBE_PROXY:
             cmd.extend(['--proxy', Config.YOUTUBE_PROXY])
 
-        if os.path.exists(cookies_path):
+        if cookies_path:
             cmd.extend(['--cookies', cookies_path])
             logger.info(f"Using cookies from {cookies_path} for stream URL extraction")
 
