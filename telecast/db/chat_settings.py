@@ -28,3 +28,23 @@ class ChatSettingsMixin:
             {"$set": updates},
             upsert=True
         )
+
+    async def touch_assistant_active(self, chat_id, when):
+        await self.db.chat_settings.update_one(
+            {"chat_id": chat_id},
+            {"$set": {"assistant_last_active": when}},
+            upsert=True
+        )
+
+    async def clear_assistant_active(self, chat_id):
+        await self.db.chat_settings.update_one(
+            {"chat_id": chat_id},
+            {"$unset": {"assistant_last_active": ""}}
+        )
+
+    async def get_idle_assistant_chats(self, cutoff, limit=20):
+        cursor = self.db.chat_settings.find(
+            {"assistant_last_active": {"$lte": cutoff}},
+            {"chat_id": 1, "_id": 0},
+        ).limit(limit)
+        return [doc["chat_id"] async for doc in cursor]

@@ -11,6 +11,7 @@ from telecast.core.logging import logger
 from telecast.db import db
 from telecast.services.stream import TGCallsManager
 from telecast.services.player import PlayerController
+from telecast.services.idle_leave import idle_leave_manager
 from telecast.ui.title import TitleUpdater
 from telecast.ui.progress import ProgressUpdater
 from telecast.ui.vc_messages import VCMessenger
@@ -101,6 +102,8 @@ class VCMusicBot:
             await self.tgcalls_manager.initialize()
             logger.info("PyTgCalls initialized")
 
+            idle_leave_manager.start(self.tgcalls_manager)
+
             monitor_logger.set_client(self.bot)
             logger.info("Monitor logger initialized")
 
@@ -139,6 +142,8 @@ class VCMusicBot:
         if self.progress_updater:
             self.progress_updater.stop_all_updates()
             logger.info("Stopped all progress updates")
+
+        await idle_leave_manager.stop()
 
         if self.tgcalls_manager:
             await self.tgcalls_manager.cleanup()

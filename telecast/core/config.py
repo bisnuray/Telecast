@@ -21,6 +21,9 @@ class Config:
     MAX_PLAYLIST_TRACKS = int(os.getenv("MAX_PLAYLIST_TRACKS", "50"))
     MAX_TRACK_DURATION = int(os.getenv("MAX_TRACK_DURATION", "7200"))
 
+    ASSISTANT_IDLE_LEAVE_SECONDS = int(os.getenv("ASSISTANT_IDLE_LEAVE_SECONDS", "3600"))
+    ASSISTANT_IDLE_CHECK_INTERVAL = int(os.getenv("ASSISTANT_IDLE_CHECK_INTERVAL", "300"))
+
     YOUTUBE_PROXY = os.getenv("YOUTUBE_PROXY", "").strip() or None
 
     CACHE_DIR = "cache"

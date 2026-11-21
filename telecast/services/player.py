@@ -8,6 +8,7 @@ from pyrogram.enums import ParseMode
 from telecast.core.config import Config
 from telecast.db import db
 from telecast.services.queue import queue_manager
+from telecast.services.idle_leave import idle_leave_manager
 from telecast.services.downloader import downloader
 from telecast.services.processor import processor
 from telecast.utils.auto_join import auto_join_handler
@@ -56,6 +57,7 @@ class PlayerController:
                 pass
 
         await queue_manager.clear_queue(chat_id)
+        await idle_leave_manager.touch(chat_id)
 
         self.current_playing.pop(chat_id, None)
         self.loop_modes.pop(chat_id, None)
@@ -122,6 +124,7 @@ class PlayerController:
 
     async def _play_inner(self, chat_id: int, track: Dict):
         self._cancel_autoplay_prompt(chat_id)
+        await idle_leave_manager.touch(chat_id)
 
         settings = await db.get_chat_settings(chat_id)
         is_video = settings.get('mode') == 'video'
@@ -586,6 +589,7 @@ class PlayerController:
                 self._cleanup_file(old_file)
 
             logger.info(f"Stopped playback and cleaned up in {chat_id}")
+            await idle_leave_manager.touch(chat_id)
             return True
         except Exception as e:
             logger.error(f"Failed to stop in {chat_id}: {e}")
