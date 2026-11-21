@@ -59,6 +59,13 @@ def setup_logger():
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
 
+    for name in ("pyrogram.session", "pyrogram.connection"):
+        pyro_logger = logging.getLogger(name)
+        pyro_logger.setLevel(logging.INFO)
+        pyro_logger.addHandler(handler)
+        pyro_logger.addHandler(file_handler)
+        pyro_logger.propagate = False
+
     return logger
 
 logger = setup_logger()
